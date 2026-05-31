@@ -116,8 +116,9 @@ CLOUDINARY_UPLOAD_FOLDER=researchai/papers
 WANDB_API_KEY=
 WANDB_INFERENCE_PROJECT=your-team/researchai
 WANDB_INFERENCE_BASE_URL=https://api.inference.wandb.ai/v1
-WANDB_INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct
-WANDB_INFERENCE_REASONING_MODEL=deepseek-ai/DeepSeek-R1-0528
+WANDB_INFERENCE_MODEL=google/gemma-4-31B-it
+WANDB_INFERENCE_REASONING_MODEL=deepseek-ai/DeepSeek-V4-Flash
+WANDB_INFERENCE_ENABLE_THINKING=true
 WEAVE_PROJECT=your-team/researchai
 ANTHROPIC_API_KEY=
 ```
@@ -125,6 +126,8 @@ ANTHROPIC_API_KEY=
 The demo must still run without these keys. Upload parsing works without Cloudinary; Cloudinary only stores the original uploaded file when the `CLOUDINARY_*` variables are present.
 
 When `WANDB_API_KEY` and `WANDB_INFERENCE_PROJECT` are set, DeepPaper uses W&B Serverless Inference through its OpenAI-compatible API. When `WEAVE_PROJECT` is set, agent calls and model calls are traced in W&B Weave. Without those variables, the app falls back to deterministic fixture outputs.
+
+The default W&B setup uses Gemma 4 31B for normal completions and DeepSeek V4-Flash for reasoning-heavy agent calls. Set `WANDB_INFERENCE_ENABLE_THINKING=false` if you want lower token use on models that support controllable reasoning.
 
 ## Team Workflow
 

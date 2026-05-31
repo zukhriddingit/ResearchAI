@@ -11,8 +11,8 @@ from app.services.weave_tracing import init_weave
 
 
 WANDB_BASE_URL = "https://api.inference.wandb.ai/v1"
-DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
-DEFAULT_REASONING_MODEL = "deepseek-ai/DeepSeek-R1-0528"
+DEFAULT_MODEL = "google/gemma-4-31B-it"
+DEFAULT_REASONING_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 
 
 async def complete_json(
@@ -125,16 +125,30 @@ async def _complete_with_wandb(
             api_key=api_key,
             project=project,
         )
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        reasoning_extra = _reasoning_extra_body()
+        if reasoning_extra:
+            request["extra_body"] = reasoning_extra
+        response = await client.chat.completions.create(**request)
         content = response.choices[0].message.content if response.choices else None
         return content or fallback
     except Exception:
         return fallback
+
+
+def _reasoning_extra_body() -> dict[str, Any] | None:
+    value = os.getenv("WANDB_INFERENCE_ENABLE_THINKING")
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+        return None
+    return {"chat_template_kwargs": {"enable_thinking": normalized in {"1", "true", "yes", "on"}}}

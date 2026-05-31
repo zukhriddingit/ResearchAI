@@ -67,6 +67,9 @@ Then edit:
 ```bash
 WANDB_API_KEY=your_wandb_api_key_here
 WANDB_INFERENCE_PROJECT=your-team/researchai
+WANDB_INFERENCE_MODEL=google/gemma-4-31B-it
+WANDB_INFERENCE_REASONING_MODEL=deepseek-ai/DeepSeek-V4-Flash
+WANDB_INFERENCE_ENABLE_THINKING=true
 WEAVE_PROJECT=your-team/researchai
 ```
 
