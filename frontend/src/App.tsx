@@ -18,6 +18,8 @@ function App() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [selectedCitation, setSelectedCitation] = useState<CitationClickResponse | null>(null);
   const [pendingCitation, setPendingCitation] = useState<PendingCitation | null>(null);
+  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
+  const [readingHistory, setReadingHistory] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,11 +75,49 @@ function App() {
     return session.papers.find((paper) => paper.id === session.main_paper_id) ?? session.papers.find((paper) => paper.is_main) ?? null;
   }, [session]);
 
+  const activePaper = useMemo<Paper | null>(() => {
+    if (!session) return null;
+    return session.papers.find((paper) => paper.id === selectedPaperId) ?? mainPaper;
+  }, [mainPaper, selectedPaperId, session]);
+
+  const rememberPaper = useCallback((paperId: string | null | undefined) => {
+    if (!paperId) return;
+    setReadingHistory((current) => [paperId, ...current.filter((id) => id !== paperId)].slice(0, 8));
+  }, []);
+
+  const applySessionState = useCallback((state: SessionState, preferredPaperId?: string | null) => {
+    setSession(state);
+    const fallbackPaperId = state.main_paper_id ?? state.papers.find((paper) => paper.is_main)?.id ?? state.papers[0]?.id ?? null;
+    const nextPaperId = preferredPaperId ?? fallbackPaperId;
+    setSelectedPaperId(nextPaperId);
+    setReadingHistory(nextPaperId ? [nextPaperId] : []);
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const available = new Set(session.papers.map((paper) => paper.id));
+    if (selectedPaperId && available.has(selectedPaperId)) {
+      setReadingHistory((current) => current.filter((paperId) => available.has(paperId)));
+      return;
+    }
+    const fallbackPaperId = mainPaper?.id ?? session.papers[0]?.id ?? null;
+    setSelectedPaperId(fallbackPaperId);
+    if (fallbackPaperId) rememberPaper(fallbackPaperId);
+  }, [mainPaper?.id, rememberPaper, selectedPaperId, session]);
+
   const refreshSession = useCallback(async () => {
     if (!sessionId) return;
     const state = await getSession(sessionId);
     setSession(state);
   }, [sessionId]);
+
+  const startFreshSession = useCallback(async () => {
+    const created = await createSession();
+    setSessionId(created.session_id);
+    const state = await getSession(created.session_id);
+    applySessionState(state);
+    return created.session_id;
+  }, [applySessionState]);
 
   const appendLocalEvent = useCallback((agent: string, message: string, type = "agent.started") => {
     setSession((current) => {
@@ -97,16 +137,15 @@ function App() {
   }, []);
 
   const handleLoad = async (sourceType: "arxiv_url" | "pdf_text" | "demo", source: string) => {
-    if (!sessionId) return;
     setBusy(true);
     setActiveAgent("parser");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation(null);
-    appendLocalEvent("Parser", sourceType === "demo" ? "Loading the LoRA demo paper." : "Loading and parsing the paper source.");
     try {
-      await loadPaper(sessionId, sourceType, source);
-      await refreshSession();
+      const activeSessionId = await startFreshSession();
+      await loadPaper(activeSessionId, sourceType, source);
+      applySessionState(await getSession(activeSessionId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load paper");
     } finally {
@@ -116,16 +155,15 @@ function App() {
   };
 
   const handleUpload = async (file: File) => {
-    if (!sessionId) return;
     setBusy(true);
     setActiveAgent("parser");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation(null);
-    appendLocalEvent("Parser", `Uploading and parsing ${file.name}.`);
     try {
-      await uploadPaper(sessionId, file);
-      await refreshSession();
+      const activeSessionId = await startFreshSession();
+      await uploadPaper(activeSessionId, file);
+      applySessionState(await getSession(activeSessionId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload paper");
     } finally {
@@ -146,6 +184,8 @@ function App() {
     try {
       const result = await clickCitation(sessionId, citationId);
       setSelectedCitation(result);
+      setSelectedPaperId(result.referenced_paper.id);
+      rememberPaper(result.referenced_paper.id);
       await refreshSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resolve citation");
@@ -158,6 +198,7 @@ function App() {
 
   const handleRunAgent = async (agentName: string, payload: { section_id?: string } = {}) => {
     if (!sessionId || !mainPaper) return;
+    const targetPaper = activePaper ?? mainPaper;
     const normalizedAgent = agentName.toLowerCase();
     if (normalizedAgent === "reference") {
       const citation = mainPaper.citations.find((item) => !item.resolved_paper_id) ?? mainPaper.citations[0];
@@ -180,7 +221,7 @@ function App() {
     setError(null);
     appendLocalEvent(titleCase(normalizedAgent), agentActionMessage(normalizedAgent));
     try {
-      await runAgent(sessionId, normalizedAgent, { paper_id: mainPaper.id, ...payload });
+      await runAgent(sessionId, normalizedAgent, { paper_id: targetPaper.id, ...payload });
       await refreshSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to run ${agentName}`);
@@ -189,6 +230,13 @@ function App() {
       setActiveAgent(null);
     }
   };
+
+  const handlePaperSelect = useCallback((paperId: string) => {
+    setSelectedPaperId(paperId);
+    rememberPaper(paperId);
+    setSelectedCitation(null);
+    setPendingCitation(null);
+  }, [rememberPaper]);
 
   return (
     <div className="app-shell">
@@ -201,11 +249,16 @@ function App() {
       )}
       <main className="workspace">
         <section className="graph-column" aria-label="Knowledge graph">
-          <KnowledgeGraph graph={session?.graph ?? { nodes: [], edges: [] }} />
+          <KnowledgeGraph
+            graph={session?.graph ?? { nodes: [], edges: [] }}
+            selectedPaperId={activePaper?.id ?? null}
+            historyPaperIds={readingHistory}
+            onPaperSelect={handlePaperSelect}
+          />
         </section>
         <section className="reader-column" aria-label="Paper reader">
           <PaperViewer
-            paper={mainPaper}
+            paper={activePaper}
             busy={busy}
             activeCitationId={pendingCitation?.id ?? null}
             onCitationClick={handleCitationClick}
@@ -219,7 +272,7 @@ function App() {
             findings={session?.findings ?? []}
             activeAgent={activeAgent}
             onRunAgent={handleRunAgent}
-            disabled={!mainPaper || busy}
+            disabled={!activePaper || busy}
           />
         </section>
       </main>

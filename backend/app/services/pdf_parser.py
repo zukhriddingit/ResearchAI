@@ -172,21 +172,203 @@ def split_into_sections(text: str) -> list[PaperSection]:
 
 def extract_citations(text: str, sections: list[PaperSection]) -> list[Citation]:
     citations: dict[str, Citation] = {}
+    reference_start = _references_start(text)
+    references = _extract_reference_metadata(text)
+    author_year_references = _extract_author_year_reference_metadata(text)
+
     for match in re.finditer(r"\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]", text):
+        if reference_start is not None and match.start() >= reference_start:
+            continue
         raw = match.group(0)
+        numbers = _citation_numbers(match.group(1))
         cid = f"cit_{match.group(1).replace(',', '_').replace(' ', '')}"
+        metadata = _citation_metadata(numbers, references)
+        if cid in citations:
+            continue
         citations[cid] = Citation(
             id=cid,
             raw=raw,
+            title=metadata.get("title"),
+            authors=metadata.get("authors", []),
+            year=metadata.get("year"),
             context_snippet=_snippet(text, match.start(), match.end()),
         )
 
     for match in re.finditer(r"([A-Z][A-Za-z-]+ et al\.,?\s*\(?\d{4}\)?)", text):
+        if reference_start is not None and match.start() >= reference_start:
+            continue
         raw = match.group(1)
         cid = f"cit_{new_id('author')}"
-        citations[cid] = Citation(id=cid, raw=raw, context_snippet=_snippet(text, match.start(), match.end()))
+        metadata = _author_year_citation_metadata(raw, author_year_references)
+        citations[cid] = Citation(
+            id=cid,
+            raw=raw,
+            title=metadata.get("title"),
+            authors=metadata.get("authors", []),
+            year=metadata.get("year"),
+            context_snippet=_snippet(text, match.start(), match.end()),
+        )
 
     return list(citations.values())
+
+
+def _references_start(text: str) -> int | None:
+    matches = list(re.finditer(r"(?im)^references\s*$", text))
+    return matches[-1].end() if matches else None
+
+
+def _extract_reference_metadata(text: str) -> dict[str, dict[str, object]]:
+    start = _references_start(text)
+    if start is None:
+        return {}
+
+    reference_text = text[start:]
+    entries = re.finditer(r"(?ms)^\[(?P<number>\d{1,3})\]\s+(?P<body>.*?)(?=^\[\d{1,3}\]\s+|\Z)", reference_text)
+    metadata: dict[str, dict[str, object]] = {}
+    for match in entries:
+        body = _clean_reference_entry(match.group("body"))
+        if not body:
+            continue
+        title = _reference_title(body)
+        if not title:
+            continue
+        metadata[match.group("number")] = {
+            "title": title,
+            "authors": _reference_authors(body),
+            "year": _reference_year(body),
+        }
+    return metadata
+
+
+def _extract_author_year_reference_metadata(text: str) -> dict[str, dict[str, object]]:
+    start = _references_start(text)
+    if start is None:
+        return {}
+
+    metadata: dict[str, dict[str, object]] = {}
+    for body in _unnumbered_reference_entries(text[start:]):
+        title = _reference_title(body)
+        year = _reference_year(body)
+        first_author = _reference_first_author(body)
+        if not title or not year or not first_author:
+            continue
+        key = f"{first_author.lower()}:{year}"
+        metadata.setdefault(
+            key,
+            {
+                "title": title,
+                "authors": _reference_authors(body),
+                "year": year,
+            },
+        )
+    return metadata
+
+
+def _unnumbered_reference_entries(reference_text: str) -> list[str]:
+    starts = [match.start() for match in re.finditer(r"(?m)^[A-Z][A-Za-z'’-]+,\s+[A-Z]", reference_text)]
+    if not starts:
+        return []
+    entries: list[str] = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(reference_text)
+        entry = _clean_reference_entry(reference_text[start:end])
+        if entry and not entry.startswith("["):
+            entries.append(entry)
+    return entries
+
+
+def _citation_numbers(raw_numbers: str) -> list[str]:
+    return [number.strip() for number in raw_numbers.split(",") if number.strip()]
+
+
+def _citation_metadata(numbers: list[str], references: dict[str, dict[str, object]]) -> dict[str, object]:
+    matches = [references[number] for number in numbers if number in references]
+    if not matches:
+        return {}
+
+    titles = [str(item["title"]) for item in matches if item.get("title")]
+    if len(matches) == 1:
+        return {
+            "title": titles[0] if titles else None,
+            "authors": matches[0].get("authors", []),
+            "year": matches[0].get("year"),
+        }
+
+    return {
+        "title": "; ".join(titles[:3]),
+        "authors": matches[0].get("authors", []),
+        "year": matches[0].get("year"),
+    }
+
+
+def _author_year_citation_metadata(raw: str, references: dict[str, dict[str, object]]) -> dict[str, object]:
+    match = re.search(r"(?P<author>[A-Z][A-Za-z'’-]+)\s+et al\.,?\s*\(?(?P<year>\d{4})", raw)
+    if not match:
+        return {}
+    return references.get(f"{match.group('author').lower()}:{match.group('year')}", {})
+
+
+def _clean_reference_entry(entry: str) -> str:
+    entry = (
+        entry.replace("\u00a0", " ")
+        .replace("\u2009", " ")
+        .replace("\ufb01", "fi")
+        .replace("\ufb02", "fl")
+    )
+    entry = re.sub(r"(?<=[A-Za-z])-\s+(?=[a-z])", "", entry)
+    entry = re.sub(r"\s+", " ", entry).strip()
+    return entry.strip(" .")
+
+
+def _reference_title(entry: str) -> str | None:
+    parts = _reference_sentence_parts(entry)
+    for part in parts[1:5]:
+        title = _normalize_title(part)
+        if _looks_like_reference_title(title):
+            return title
+
+    if len(parts) == 1:
+        title = _normalize_title(parts[0])
+        if _looks_like_reference_title(title) and not _looks_like_author_line(title):
+            return title
+
+    return None
+
+
+def _looks_like_reference_title(title: str) -> bool:
+    lower = title.lower().strip()
+    if not lower or len(title) < 4 or len(title) > 220:
+        return False
+    if _looks_like_author_line(title):
+        return False
+    if lower.startswith(("in ", "pages ", "volume ", "arxiv preprint", "ieee ", "springer", "proceedings")):
+        return False
+    if re.fullmatch(r"(19|20)\d{2}.*", lower):
+        return False
+    letters = sum(1 for char in title if char.isalpha())
+    return letters >= 4 and letters / max(len(title), 1) >= 0.35
+
+
+def _reference_authors(entry: str) -> list[str]:
+    first_sentence = _reference_sentence_parts(entry)[0] if _reference_sentence_parts(entry) else ""
+    first_sentence = re.sub(r"\bet al\b\.?", "et al.", first_sentence, flags=re.IGNORECASE)
+    chunks = re.split(r",\s+|\s+and\s+|&", first_sentence)
+    authors = [_normalize_title(chunk) for chunk in chunks]
+    return [author for author in authors if 2 <= len(author) <= 80][:8]
+
+
+def _reference_first_author(entry: str) -> str | None:
+    match = re.match(r"([A-Z][A-Za-z'’-]+),", entry)
+    return match.group(1) if match else None
+
+
+def _reference_sentence_parts(entry: str) -> list[str]:
+    return [part.strip() for part in re.split(r"\.\s+", entry) if part.strip()]
+
+
+def _reference_year(entry: str) -> int | None:
+    years = re.findall(r"\b(19\d{2}|20\d{2})\b", entry)
+    return int(years[-1]) if years else None
 
 
 def _snippet(text: str, start: int, end: int, width: int = 160) -> str:

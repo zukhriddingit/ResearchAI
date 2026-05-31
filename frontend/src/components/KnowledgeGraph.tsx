@@ -4,9 +4,12 @@ import type { GraphNode, GraphState } from "../types";
 
 interface Props {
   graph: GraphState;
+  selectedPaperId?: string | null;
+  historyPaperIds?: string[];
+  onPaperSelect?: (paperId: string) => void;
 }
 
-function KnowledgeGraph({ graph }: Props) {
+function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperSelect }: Props) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const width = 360;
   const height = 520;
@@ -19,17 +22,25 @@ function KnowledgeGraph({ graph }: Props) {
     return { ...node, x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius };
   }), [graph.nodes]);
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const selectedPaperNode = selectedPaperId ? graph.nodes.find((node) => node.paper_id === selectedPaperId) : null;
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? graph.nodes.find((node) => node.status === "main") ?? graph.nodes[0];
+  const historyNodes = historyPaperIds
+    .map((paperId) => graph.nodes.find((node) => node.paper_id === paperId))
+    .filter((node): node is GraphNode => Boolean(node));
 
   useEffect(() => {
     if (!graph.nodes.length) {
       setSelectedNodeId(null);
       return;
     }
+    if (selectedPaperNode && selectedNodeId !== selectedPaperNode.id) {
+      setSelectedNodeId(selectedPaperNode.id);
+      return;
+    }
     if (!selectedNodeId || !graph.nodes.some((node) => node.id === selectedNodeId)) {
       setSelectedNodeId(graph.nodes.find((node) => node.status === "main")?.id ?? graph.nodes[0].id);
     }
-  }, [graph.nodes, selectedNodeId]);
+  }, [graph.nodes, selectedNodeId, selectedPaperNode]);
 
   return (
     <div className="panel graph-panel">
@@ -63,9 +74,9 @@ function KnowledgeGraph({ graph }: Props) {
               className={`graph-node ${selectedNode?.id === node.id ? "is-selected" : ""}`}
               role="button"
               tabIndex={0}
-              onClick={() => setSelectedNodeId(node.id)}
+              onClick={() => selectNode(node, setSelectedNodeId, onPaperSelect)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") setSelectedNodeId(node.id);
+                if (event.key === "Enter" || event.key === " ") selectNode(node, setSelectedNodeId, onPaperSelect);
               }}
             >
               <circle r={node.status === "main" ? 34 : 25} className={`node-circle node-${node.type} status-${node.status}`} />
@@ -85,9 +96,30 @@ function KnowledgeGraph({ graph }: Props) {
         <span><i className="dot ref-dot" /> paper</span>
         <span><i className="dot code-dot" /> code</span>
       </div>
+      {historyNodes.length > 0 && (
+        <div className="graph-history">
+          <h3>Reading History</h3>
+          <div>
+            {historyNodes.map((node) => (
+              <button
+                key={node.id}
+                className={node.paper_id === selectedPaperId ? "is-active" : ""}
+                onClick={() => node.paper_id && onPaperSelect?.(node.paper_id)}
+              >
+                {shortLabel(node.label, 34)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {selectedNode && <NodeDetail node={selectedNode} />}
     </div>
   );
+}
+
+function selectNode(node: GraphNode, setSelectedNodeId: (id: string) => void, onPaperSelect?: (paperId: string) => void) {
+  setSelectedNodeId(node.id);
+  if (node.paper_id) onPaperSelect?.(node.paper_id);
 }
 
 function initials(label: string) {
@@ -99,8 +131,8 @@ function initials(label: string) {
     .join("");
 }
 
-function shortLabel(label: string) {
-  return label.length > 20 ? `${label.slice(0, 18)}...` : label;
+function shortLabel(label: string, length = 20) {
+  return label.length > length ? `${label.slice(0, length - 2)}...` : label;
 }
 
 function NodeDetail({ node }: { node: GraphNode }) {

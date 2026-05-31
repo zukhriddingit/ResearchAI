@@ -305,6 +305,41 @@ button:disabled {
   background: #f8fafb;
 }
 
+.graph-history {
+  display: grid;
+  gap: 8px;
+  margin: 0 14px 12px;
+}
+
+.graph-history h3 {
+  margin: 0;
+  color: #52616d;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.graph-history div {
+  display: grid;
+  gap: 6px;
+}
+
+.graph-history button {
+  min-height: 32px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid #d8e0e6;
+  background: #ffffff;
+  color: #25313b;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.graph-history button.is-active {
+  border-color: #d4a017;
+  background: #fff8dc;
+}
+
 .node-detail-head {
   display: flex;
   align-items: flex-start;
@@ -398,6 +433,12 @@ button:disabled {
   place-content: center;
   text-align: center;
   padding: 40px;
+}
+
+.reader-empty.compact {
+  min-height: 220px;
+  margin-top: 14px;
+  box-shadow: none;
 }
 
 .reader-empty h2 {
@@ -576,6 +617,11 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+.citation-more {
+  border-style: dashed;
+  background: #f8fafb;
 }
 
 .citation-detail {

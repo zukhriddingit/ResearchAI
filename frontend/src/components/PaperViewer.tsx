@@ -21,11 +21,17 @@ function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgen
     );
   }
 
+  const sections = paper.sections.length > 0
+    ? paper.sections
+    : paper.abstract
+      ? [{ id: `${paper.id}_abstract`, title: "Abstract", type: "abstract", text: paper.abstract }]
+      : [];
+
   return (
     <div className="paper-viewer">
       <div className="paper-header">
         <div>
-          <p className="eyebrow">Main Paper</p>
+          <p className="eyebrow">{paper.is_main ? "Main Paper" : "Referenced Paper"}</p>
           <h2>{paper.title}</h2>
           <p className="paper-meta">
             {paper.authors.slice(0, 4).join(", ")}
@@ -50,7 +56,13 @@ function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgen
           </button>
         </div>
       </div>
-      {paper.sections.map((section) => (
+      {sections.length === 0 && (
+        <div className="reader-empty compact">
+          <h2>{paper.title}</h2>
+          <p>No abstract or extracted text is available for this referenced paper yet.</p>
+        </div>
+      )}
+      {sections.map((section) => (
         <SectionBlock
           key={section.id}
           section={section}
@@ -74,7 +86,9 @@ function SectionBlock({ section, citations, busy, activeCitationId, onCitationCl
   onRunAgent: (agentName: string, payload?: { section_id?: string }) => void;
 }) {
   const [expanded, setExpanded] = useState(section.text.length < 1200);
+  const [showAllCitations, setShowAllCitations] = useState(false);
   const text = expanded ? section.text : `${section.text.slice(0, 1200)}...`;
+  const visibleCitations = showAllCitations ? citations : citations.slice(0, 18);
 
   return (
     <article className="section-block">
@@ -108,12 +122,18 @@ function SectionBlock({ section, citations, busy, activeCitationId, onCitationCl
       )}
       {citations.length > 0 && (
         <div className="citation-row">
-          {citations.map((citation) => (
+          {visibleCitations.map((citation) => (
             <button key={citation.id} className="citation-chip" disabled={busy} onClick={() => onCitationClick(citation.id)}>
               <span>{citation.raw}</span>
-              <strong>{citation.title ?? "Unresolved citation"}</strong>
+              <strong>{citationLabel(citation)}</strong>
             </button>
           ))}
+          {citations.length > visibleCitations.length && (
+            <button className="citation-chip citation-more" onClick={() => setShowAllCitations(true)}>
+              <span>+{citations.length - visibleCitations.length}</span>
+              <strong>Show more citations</strong>
+            </button>
+          )}
         </div>
       )}
     </article>
@@ -121,11 +141,18 @@ function SectionBlock({ section, citations, busy, activeCitationId, onCitationCl
 }
 
 function citationsForSection(citations: Citation[], section: PaperSection) {
+  if (section.type === "references") return [];
   const text = `${section.title} ${section.text}`;
   return citations.filter((citation) => text.includes(citation.raw) || (citation.context_snippet && text.includes(citation.context_snippet.slice(0, 30))));
 }
 
 export default PaperViewer;
+
+function citationLabel(citation: Citation) {
+  if (citation.title) return citation.title;
+  if (citation.authors.length > 0 && citation.year) return `${citation.authors[0]} et al., ${citation.year}`;
+  return "Unresolved citation";
+}
 
 function renderTextWithCitations(
   text: string,

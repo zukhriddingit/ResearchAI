@@ -17,14 +17,15 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
     fixture = load_lora_fixture()
     resolved = fixture["references"].get(citation.id)
 
-    if not resolved and citation.title:
-        matches = await search_paper(citation.title, limit=1)
+    query = _citation_search_query(citation)
+    if not resolved and query:
+        matches = await search_paper(query, limit=1)
         if matches:
             match = matches[0]
             resolved = {
                 "paper": {
                     "id": f"paper_{match.get('paperId', new_id('semantic'))}",
-                    "title": match.get("title") or citation.title,
+                    "title": match.get("title") or query,
                     "authors": [author.get("name", "") for author in match.get("authors", []) if author.get("name")],
                     "year": match.get("year"),
                     "abstract": match.get("abstract"),
@@ -105,3 +106,9 @@ def _as_list(value) -> list[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+def _citation_search_query(citation: Citation) -> str:
+    if citation.title:
+        return citation.title.split(";")[0].strip()
+    return citation.raw.strip()
