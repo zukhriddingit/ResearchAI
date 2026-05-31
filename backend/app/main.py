@@ -8,12 +8,15 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # load repo-root .env before anything else
 
+import io
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from app.agents.adversarial_agent import run_adversarial_agent
 from app.agents.code_agent import apply_suggestions, apply_user_change, run_code_agent
+from app.services.code_generator import generate_full_project
 from app.agents.critique_agent import run_critique_agent
 from app.agents.evaluation_agent import run_evaluation_agent
 from app.agents.math_agent import run_math_agent
@@ -25,6 +28,7 @@ from app.models import (
     AgentFinding,
     AgentRunRequest,
     CodeChangeRequest,
+    CodeGenerateRequest,
     CreateSessionResponse,
     GraphEdge,
     GraphNode,
@@ -364,6 +368,89 @@ async def code_change(session_id: str, request: CodeChangeRequest):
         "edits": [e.model_dump() for e in edits],
         "events": session.events[started_at:],
     }
+
+
+# ---------------------------------------------------------------------------
+# Code project generation  (multi-file ZIP)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/sessions/{session_id}/code/generate")
+async def generate_code_project(session_id: str, request: CodeGenerateRequest):
+    """
+    Generate a complete, multi-file Python project from the paper and download as ZIP.
+
+    Body: { "paper_id": "...", "include_tests": true, "include_scripts": true }
+
+    Returns JSON:
+    {
+      "project_name": "transformer-attn",
+      "description": "...",
+      "file_count": 14,
+      "total_lines": 1820,
+      "file_list": [{"path": "src/model.py", "description": "..."}],
+      "download_url": "/api/sessions/{sid}/code/download"
+    }
+
+    After this call, GET /api/sessions/{sid}/code/download returns the ZIP file.
+    """
+    session = _session_or_404(session_id)
+    paper = (_paper_by_id(session, request.paper_id) if request.paper_id
+             else _main_paper_or_404(session))
+
+    repo = _repo_from_graph(session_id)
+    started_at = len(session.events)
+
+    emit(session_id, "codegen.started",
+         f"Generating full project for '{paper.title[:60]}' …",
+         agent="Code", status="running",
+         payload={"paper_id": paper.id})
+
+    result = await generate_full_project(
+        paper=paper,
+        repo=repo,
+        equations=paper.equations or None,
+        event_emitter=emit,
+        session=session,
+    )
+
+    store.store_zip(session_id, result.zip_bytes, result.project_name)
+
+    emit(session_id, "codegen.done",
+         f"Project '{result.project_name}' ready — {len(result.files)} files, "
+         f"{sum(c.count(chr(10)) for c in result.files.values())} lines.",
+         agent="Code", status="done",
+         payload=result.to_json_safe())
+
+    trace_agent_run("CodeGenerate", request.model_dump(), result.to_json_safe())
+
+    session = store.get_session(session_id)
+    return {
+        **result.to_json_safe(),
+        "download_url": f"/api/sessions/{session_id}/code/download",
+        "events": session.events[started_at:],
+    }
+
+
+@app.get("/api/sessions/{session_id}/code/download")
+async def download_code_project(session_id: str):
+    """
+    Download the generated project ZIP.
+    Call POST /code/generate first to build it.
+    """
+    _session_or_404(session_id)
+    zip_bytes = store.get_zip(session_id)
+    if not zip_bytes:
+        raise HTTPException(
+            status_code=404,
+            detail="No generated project found. POST /code/generate first.",
+        )
+    project_name = store.get_zip_name(session_id)
+    filename = f"{project_name}.zip"
+    return StreamingResponse(
+        io.BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

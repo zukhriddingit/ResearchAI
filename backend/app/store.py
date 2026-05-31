@@ -16,6 +16,8 @@ from app.models import (
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, SessionState] = {}
+        self._zips: dict[str, bytes] = {}          # session_id → zip bytes
+        self._zip_names: dict[str, str] = {}       # session_id → project_name
         self._lock = RLock()
 
     def create_session(self) -> SessionState:
@@ -61,6 +63,19 @@ class SessionStore:
             session = self.get_session(session_id)
             session.graph = graph
             return graph
+
+    def store_zip(self, session_id: str, zip_bytes: bytes, project_name: str) -> None:
+        with self._lock:
+            self._zips[session_id] = zip_bytes
+            self._zip_names[session_id] = project_name
+
+    def get_zip(self, session_id: str) -> bytes | None:
+        with self._lock:
+            return self._zips.get(session_id)
+
+    def get_zip_name(self, session_id: str) -> str:
+        with self._lock:
+            return self._zip_names.get(session_id, "project")
 
 
 store = SessionStore()

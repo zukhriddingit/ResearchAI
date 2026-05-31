@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models import AgentFinding, AgentTrigger, CodeEdit, Paper
+from app.services.code_generator import ProjectResult, generate_full_project
 from app.services.fixtures import load_lora_fixture
 from app.services.github_client import search_repositories
 from app.services.llm import complete_json, complete_text
@@ -111,17 +112,20 @@ async def run_code_agent(
     repos = await search_repositories(query, max_results=3)
     repo = repos[0] if repos else load_lora_fixture()["code_repo"]
 
-    # If no real repo was found (fixture fallback), offer generated code
     repo_is_real = bool(repos)
     analysis = await _analyze_repo(paper, repo, finding)
 
-    generated_code: dict = {}
-    if not repo_is_real:
-        if event_emitter:
-            event_emitter(session.session_id, "code.generating",
-                          "No public repo found — generating implementation from paper.",
-                          agent="Code", status="running")
-        generated_code = await _generate_code_from_paper(paper, section)
+    # Always offer generated code (both when repo found and when not)
+    if event_emitter:
+        event_emitter(session.session_id, "code.generating",
+                      "Generating full project — use POST /code/generate for the ZIP.",
+                      agent="Code", status="running")
+    # We don't run the full generator here (it's slow); surface it via /code/generate.
+    # Just record that generation is available.
+    generated_code: dict = {
+        "available": True,
+        "hint": "POST /api/sessions/{session_id}/code/generate to get the full ZIP",
+    }
 
     triggers: list[dict] = [
         AgentTrigger(
@@ -191,44 +195,37 @@ async def _analyze_repo(paper: Paper, repo: dict, finding=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Code generation from paper (when no public repo is found)
+# Code generation from paper — full multi-file project
 # ---------------------------------------------------------------------------
 
 @weave_op
-async def _generate_code_from_paper(paper: Paper, section=None) -> dict:
+async def _generate_code_from_paper(
+    paper: Paper,
+    repo: dict,
+    section=None,
+    event_emitter=None,
+    session=None,
+) -> dict:
     """
-    Generate a Python implementation skeleton directly from the paper's method description.
-    Returns a dict with filename, code, description, dependencies, usage_example, limitations.
+    Generate a complete, multi-file Python project from the paper.
+    Returns a dict with project_name, description, file_count, file_list,
+    total_lines, and zip_bytes (raw bytes of the ZIP archive).
     """
-    method_text = ""
-    if section:
-        method_text = section.text[:3000]
-    else:
-        method_text = next(
-            (s.text[:3000] for s in paper.sections
-             if s.type in ("methodology", "method", "methods", "approach")),
-            "",
-        )
-        if not method_text and paper.sections:
-            method_text = paper.sections[0].text[:2000]
-
-    claims_text = "\n".join(f"- {c.text}" for c in paper.claims[:4])
-    user_msg = (
-        f"Paper title: {paper.title}\n"
-        f"Year: {paper.year or 'unknown'}\n\n"
-        f"Key claims:\n{claims_text}\n\n"
-        f"Method description:\n{method_text}"
+    result: ProjectResult = await generate_full_project(
+        paper=paper,
+        repo=repo,
+        equations=paper.equations or None,
+        event_emitter=event_emitter,
+        session=session,
     )
-    safe_title = paper.title.lower()[:30].replace(" ", "_").replace("/", "_")
-    fallback = {
-        "filename": f"{safe_title}_impl.py",
-        "code": f'"""\nGenerated skeleton for: {paper.title}\nFill in the TODOs based on the paper.\n"""\n\nimport torch\nimport torch.nn as nn\n\n# TODO: implement core method from paper\n',
-        "description": f"Skeleton implementation of {paper.title}",
-        "dependencies": ["torch", "numpy"],
-        "usage_example": "# See paper for usage details.",
-        "limitations": ["Skeleton only — needs paper-specific implementation."],
+    return {
+        **result.to_json_safe(),
+        "zip_bytes": result.zip_bytes,   # raw bytes — caller stores in session store
+        "files_preview": {               # first 800 chars per file for the API response
+            path: content[:800]
+            for path, content in list(result.files.items())[:6]
+        },
     }
-    return await complete_json(CODE_GENERATION_PROMPT, user_msg, fallback)
 
 
 # ---------------------------------------------------------------------------
