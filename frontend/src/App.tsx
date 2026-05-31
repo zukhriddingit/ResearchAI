@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { AlertCircle } from "lucide-react";
 import { analyzePaper, apiBase, clickCitation, createSession, getEvents, getSession, loadPaper, runAgent, subscribeEvents, uploadPaper } from "./api";
 import AgentPanel from "./components/AgentPanel";
@@ -23,6 +24,17 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [columns, setColumns] = useState({ left: 20, right: 30 });
+
+  const workspaceStyle = useMemo(
+    () =>
+      ({
+        "--left-column": leftCollapsed ? "52px" : `clamp(240px, ${columns.left}%, 460px)`,
+        "--right-column": `clamp(300px, ${columns.right}%, 640px)`
+      }) as CSSProperties,
+    [columns.left, columns.right, leftCollapsed]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -265,6 +277,40 @@ function App() {
     setPendingCitation(null);
   }, [rememberPaper]);
 
+  const startColumnResize = useCallback((side: "left" | "right", event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const workspace = event.currentTarget.closest(".workspace");
+    if (!(workspace instanceof HTMLElement)) return;
+    const rect = workspace.getBoundingClientRect();
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const pointerPercent =
+        side === "left"
+          ? ((moveEvent.clientX - rect.left) / rect.width) * 100
+          : ((rect.right - moveEvent.clientX) / rect.width) * 100;
+
+      setColumns((current) => {
+        if (side === "left") {
+          const maxLeft = Math.min(32, 68 - current.right);
+          return { ...current, left: clamp(pointerPercent, 14, maxLeft) };
+        }
+        const maxRight = Math.min(42, 68 - current.left);
+        return { ...current, right: clamp(pointerPercent, 24, maxRight) };
+      });
+    };
+
+    const stopResize = () => {
+      document.body.classList.remove("is-resizing-columns");
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", stopResize);
+    };
+
+    if (side === "left") setLeftCollapsed(false);
+    document.body.classList.add("is-resizing-columns");
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", stopResize);
+  }, []);
+
   return (
     <div className="app-shell">
       <UploadBar busy={busy} onLoad={handleLoad} onUpload={handleUpload} />
@@ -274,15 +320,24 @@ function App() {
           <span>{error}</span>
         </div>
       )}
-      <main className="workspace">
-        <section className="graph-column" aria-label="Knowledge graph">
+      <main className={`workspace ${leftCollapsed ? "map-collapsed" : ""}`} style={workspaceStyle}>
+        <section className={`graph-column ${leftCollapsed ? "is-collapsed" : ""}`} aria-label="Knowledge graph">
           <KnowledgeGraph
             graph={session?.graph ?? { nodes: [], edges: [] }}
             selectedPaperId={activePaper?.id ?? null}
             historyPaperIds={readingHistory}
             onPaperSelect={handlePaperSelect}
+            collapsed={leftCollapsed}
+            onToggleCollapsed={() => setLeftCollapsed((current) => !current)}
           />
         </section>
+        <div
+          className={`resize-handle left-resize ${leftCollapsed ? "is-disabled" : ""}`}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize research map"
+          onPointerDown={(event) => !leftCollapsed && startColumnResize("left", event)}
+        />
         <section className="reader-column" aria-label="Paper reader">
           <PaperViewer
             paper={activePaper}
@@ -294,6 +349,13 @@ function App() {
           />
           {activePaper && (selectedCitation || pendingCitation) && <CitationPopover result={selectedCitation} pendingCitation={pendingCitation} />}
         </section>
+        <div
+          className="resize-handle right-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize research assistants"
+          onPointerDown={(event) => startColumnResize("right", event)}
+        />
         <section className="agent-column" aria-label="Agent events">
           <AgentPanel
             events={session?.events ?? []}
@@ -314,6 +376,10 @@ function uniqueIds(ids: Array<string | null | undefined>) {
 
 function titleCase(value: string) {
   return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function agentActionMessage(agentName: string) {

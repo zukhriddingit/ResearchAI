@@ -1,4 +1,4 @@
-import { GitBranch } from "lucide-react";
+import { GitBranch, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphNode, GraphState } from "../types";
 
@@ -7,9 +7,11 @@ interface Props {
   selectedPaperId?: string | null;
   historyPaperIds?: string[];
   onPaperSelect?: (paperId: string) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
-function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperSelect }: Props) {
+function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperSelect, collapsed = false, onToggleCollapsed }: Props) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const previousPaperId = useRef<string | null | undefined>(undefined);
   const width = 360;
@@ -51,11 +53,30 @@ function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperS
     }
   }, [graph.nodes, selectedNodeId, selectedPaperNode]);
 
+  if (collapsed) {
+    return (
+      <div className="panel graph-panel graph-panel-collapsed">
+        <button className="graph-collapse-button" type="button" onClick={onToggleCollapsed} aria-label="Expand research map" title="Expand research map">
+          <PanelLeftOpen size={18} />
+        </button>
+        <div className="graph-collapsed-label">
+          <GitBranch size={17} />
+          <span>Map</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="panel graph-panel">
       <div className="panel-title">
-        <GitBranch size={16} />
-        <span>Research Map</span>
+        <div className="panel-title-main">
+          <GitBranch size={16} />
+          <span>Research Map</span>
+        </div>
+        <button className="icon-button panel-title-action" type="button" onClick={onToggleCollapsed} aria-label="Collapse research map" title="Collapse research map">
+          <PanelLeftClose size={16} />
+        </button>
       </div>
       {nodes.length === 0 ? (
         <div className="empty-graph">No map yet.</div>
