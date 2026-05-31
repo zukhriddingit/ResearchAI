@@ -33,7 +33,7 @@ VITE_API_URL=http://127.0.0.1:8000 npm run dev
 ## Demo Checklist
 
 1. Start backend and frontend.
-2. Click `LoRA Demo` or upload a PDF/text paper.
+2. Upload a PDF/text paper or load an arXiv URL.
 3. Confirm the main paper sections appear.
 4. Click citation `[1]` inline or in the citation chip row.
 5. Confirm the citation detail shows a resolving state, then a contextual summary.

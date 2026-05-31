@@ -1,9 +1,9 @@
-import { FileUp, FlaskConical, Link, Loader2, Play } from "lucide-react";
+import { FileUp, Link, Loader2, Play } from "lucide-react";
 import { ChangeEvent, FormEvent, useRef, useState } from "react";
 
 interface Props {
   busy: boolean;
-  onLoad: (sourceType: "arxiv_url" | "pdf_text" | "demo", source: string) => void;
+  onLoad: (sourceType: "arxiv_url" | "pdf_text", source: string) => void;
   onUpload: (file: File) => void;
 }
 
@@ -39,10 +39,6 @@ function UploadBar({ busy, onLoad, onUpload }: Props) {
         <button className="button secondary" type="submit" disabled={busy}>
           {busy ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
           <span>Load Paper</span>
-        </button>
-        <button className="button primary" type="button" disabled={busy} onClick={() => onLoad("demo", "lora")}>
-          <FlaskConical size={16} />
-          <span>LoRA Demo</span>
         </button>
         <input
           ref={fileInputRef}

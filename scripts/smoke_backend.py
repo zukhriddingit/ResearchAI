@@ -17,14 +17,6 @@ def main() -> None:
     health.raise_for_status()
     session = client.post("/api/sessions").json()
     session_id = session["session_id"]
-    loaded = client.post(
-        f"/api/sessions/{session_id}/papers/load",
-        json={"source_type": "demo", "source": "lora"},
-    )
-    loaded.raise_for_status()
-    clicked = client.post(f"/api/sessions/{session_id}/citations/cit_adapter/click")
-    clicked.raise_for_status()
-    result = clicked.json()
     upload_text = (
         "2602.10067v3 [cs.LG] 19 Feb 2026\n"
         "Grounding Supervision in Language Features\n"
@@ -41,13 +33,21 @@ def main() -> None:
         files={"file": ("2602.10067v3 (1).txt", upload_text.encode("utf-8"), "text/plain")},
     )
     uploaded.raise_for_status()
+    paper = uploaded.json()["paper"]
+    citation_id = paper["citations"][0]["id"]
+    clicked = client.post(
+        f"/api/sessions/{session_id}/citations/{citation_id}/click",
+        params={"paper_id": paper["id"]},
+    )
+    clicked.raise_for_status()
+    result = clicked.json()
     print(
         {
             "session_id": session_id,
-            "paper": result["referenced_paper"]["title"],
+            "paper": paper["title"],
+            "reference": result["referenced_paper"]["title"],
             "nodes": len(result["graph"]["nodes"]),
             "events": len(result["events"]),
-            "upload": uploaded.json()["paper"]["title"],
         }
     )
 

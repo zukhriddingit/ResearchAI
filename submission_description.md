@@ -10,7 +10,7 @@ Reading research papers is slow because each citation, baseline, claim, and impl
 
 ## What It Does
 
-- Loads a demo LoRA paper or arXiv URL.
+- Loads uploaded papers or arXiv metadata.
 - Parses sections, citations, and claims.
 - Makes citations clickable.
 - Resolves references relative to the main paper.
@@ -26,7 +26,7 @@ Reading research papers is slow because each citation, baseline, claim, and impl
 - Agents: Parser, Reference, Critique, Code, Replication, Evaluation, Adversarial.
 - Handoff protocol: typed append-only events such as `paper.parsed`, `citation.resolved`, `experiment.missing`, `repo.ready`, `replication.queued`, `benchmark.suggested`, `attack.found`, `node.update`, and `edge.update`.
 - Harness: Code searches implementation candidates, Replication returns a dry-run scorecard, Evaluation proposes missing experiments, and Adversarial converts claims into stress tests.
-- Reliability: fixture-first LoRA path works without API keys.
+- Reliability: upload parsing works without API keys, while external services fail gracefully.
 
 ## Sponsor Tools
 

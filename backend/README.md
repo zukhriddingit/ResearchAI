@@ -18,17 +18,15 @@ Health check:
 curl http://localhost:8000/health
 ```
 
-## Demo Flow
+## Smoke Flow
 
 ```bash
 SESSION_ID=$(curl -s -X POST http://localhost:8000/api/sessions | python -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
-curl -s -X POST "http://localhost:8000/api/sessions/$SESSION_ID/papers/load" \
-  -H "content-type: application/json" \
-  -d '{"source_type":"demo","source":"lora"}'
-curl -s -X POST "http://localhost:8000/api/sessions/$SESSION_ID/citations/cit_adapter/click"
+curl -s -X POST "http://localhost:8000/api/sessions/$SESSION_ID/papers/upload" \
+  -F "file=@/path/to/paper.pdf"
 ```
 
-The demo works without API keys. External arXiv, Semantic Scholar, GitHub, Anthropic, and W&B integrations are optional and must fail gracefully.
+Upload parsing works without API keys. External arXiv, Semantic Scholar, GitHub, Anthropic, and W&B integrations are optional and must fail gracefully.
 
 ## Upload Papers
 

@@ -18,8 +18,17 @@ SECTION_NAMES = [
     "results",
     "discussion",
     "conclusion",
+    "appendix",
     "references",
 ]
+
+UNNUMBERED_SECTION_NAMES = {name for name in SECTION_NAMES if name != "method"}
+
+SECTION_TYPE_ALIASES = {
+    "methods": "method",
+    "methodology": "method",
+    "approach": "method",
+}
 
 TITLE_STOP_HEADINGS = {
     "abstract",
@@ -136,11 +145,8 @@ def split_into_sections(text: str) -> list[PaperSection]:
     if not text.strip():
         return []
 
-    heading_pattern = re.compile(
-        r"(?im)^(?P<title>" + "|".join(re.escape(name) for name in SECTION_NAMES) + r")\s*$"
-    )
-    matches = list(heading_pattern.finditer(text))
-    if not matches:
+    headings = _section_headings(text)
+    if not headings:
         return [
             PaperSection(
                 id="sec_text",
@@ -153,21 +159,134 @@ def split_into_sections(text: str) -> list[PaperSection]:
         ]
 
     sections: list[PaperSection] = []
-    for index, match in enumerate(matches):
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        title = match.group("title").strip()
+    for index, heading in enumerate(headings):
+        start = heading["end"]
+        end = headings[index + 1]["start"] if index + 1 < len(headings) else len(text)
+        body = text[start:end].strip()
+        if not body:
+            continue
+        title = str(heading["title"])
+        section_type = str(heading["type"])
         sections.append(
             PaperSection(
-                id=f"sec_{title.lower().replace(' ', '_')}",
-                title=title.title(),
-                type=title.lower().replace(" ", "_"),
-                text=text[start:end].strip()[:8000],
+                id=f"sec_{index + 1}_{section_type}",
+                title=title,
+                type=section_type,
+                text=body[:8000],
                 start_offset=start,
                 end_offset=end,
             )
         )
     return sections
+
+
+def _section_headings(text: str) -> list[dict[str, object]]:
+    headings: list[dict[str, object]] = []
+    lines = _line_spans(text)
+    after_appendix = False
+
+    for index, (start, end, line) in enumerate(lines):
+        previous_line = lines[index - 1][2] if index > 0 else ""
+        next_line = lines[index + 1][2] if index + 1 < len(lines) else ""
+        heading = _parse_section_heading(line, previous_line, next_line, after_appendix)
+        if not heading:
+            continue
+        if heading["type"] == "appendix":
+            after_appendix = True
+        headings.append({"start": start, "end": end, **heading})
+
+    return _dedupe_close_headings(headings)
+
+
+def _line_spans(text: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    cursor = 0
+    for raw_line in text.splitlines(keepends=True):
+        start = cursor
+        cursor += len(raw_line)
+        spans.append((start, cursor, raw_line.rstrip("\r\n")))
+    return spans
+
+
+def _parse_section_heading(line: str, previous_line: str, next_line: str, after_appendix: bool) -> dict[str, str] | None:
+    clean = _clean_heading_line(line)
+    if not clean or len(clean) > 110:
+        return None
+    lower = clean.lower().strip(": ")
+
+    if lower in UNNUMBERED_SECTION_NAMES and not _looks_like_table_header(clean, previous_line, next_line):
+        return {"title": clean.title(), "type": _section_type(clean)}
+
+    numbered = re.match(r"^(?P<number>\d+(?:\.\d+)*)\.?\s+(?P<title>[A-Z][A-Za-z0-9][A-Za-z0-9:()&,\-/ ]{2,90})$", clean)
+    if numbered:
+        title = _normalize_title(numbered.group("title"))
+        if _looks_like_section_title(title):
+            return {"title": title, "type": _section_type(title)}
+
+    appendix = re.match(r"^(?P<label>[A-Z])\.\s+(?P<title>[A-Z][A-Za-z0-9][A-Za-z0-9:()&,\-/ ]{2,90})$", clean)
+    if after_appendix and appendix:
+        title = _normalize_title(appendix.group("title"))
+        if _looks_like_section_title(title):
+            return {"title": title, "type": _section_type(title)}
+
+    return None
+
+
+def _dedupe_close_headings(headings: list[dict[str, object]]) -> list[dict[str, object]]:
+    deduped: list[dict[str, object]] = []
+    for heading in headings:
+        previous = deduped[-1] if deduped else None
+        if previous and heading["type"] == previous["type"] and int(heading["start"]) - int(previous["start"]) < 120:
+            previous.update(heading)
+            continue
+        deduped.append(heading)
+    return deduped
+
+
+def _clean_heading_line(line: str) -> str:
+    line = line.replace("\u00a0", " ").replace("\u2009", " ").replace("\ufb01", "fi").replace("\ufb02", "fl")
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def _looks_like_section_title(title: str) -> bool:
+    if not title or len(title) < 4 or len(title) > 100:
+        return False
+    if title.endswith("."):
+        return False
+    if "," in title or re.search(r"\b(we|our|this|these|those)\b", title, flags=re.IGNORECASE):
+        return False
+    lower = title.lower()
+    if lower.startswith(("table ", "figure ", "fig. ", "algorithm ")):
+        return False
+    letters = sum(1 for char in title if char.isalpha())
+    if letters < 4 or letters / max(len(title), 1) < 0.35:
+        return False
+    return True
+
+
+def _looks_like_table_header(line: str, previous_line: str, next_line: str) -> bool:
+    context = f"{previous_line} {line} {next_line}".lower()
+    table_terms = [
+        "flops",
+        "#param",
+        "#params",
+        "top-1",
+        "acc.",
+        "schedule",
+        " ap ",
+        "ap50",
+        "ap75",
+        "miou",
+        "table ",
+        "imagenet-1k classification",
+        "object detection",
+    ]
+    return any(term in context for term in table_terms)
+
+
+def _section_type(title: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+    return SECTION_TYPE_ALIASES.get(normalized, normalized or "section")
 
 
 def extract_citations(text: str, sections: list[PaperSection]) -> list[Citation]:

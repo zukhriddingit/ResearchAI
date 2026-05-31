@@ -9,7 +9,6 @@ DeepPaper is a multi-agent research reading app for the Multi-Agent Orchestratio
 - FastAPI backend with typed Pydantic models.
 - In-memory sessions, graph state, findings, and agent event log.
 - Server-Sent Events endpoint with frontend polling fallback.
-- Deterministic LoRA demo fixture that works with no API keys.
 - PDF/text upload with optional original-file storage in Cloudinary.
 - React/Vite frontend with paper reader, citation chips, graph panel, and agent feed.
 - Harness agents for code search, dry-run replication scoring, benchmark suggestions, and adversarial stress tests.
@@ -80,11 +79,11 @@ VITE_API_URL=http://localhost:8000 npm run dev
 ## Demo Flow
 
 1. Open the frontend.
-2. Click `LoRA Demo` or `Upload Paper`.
+2. Click `Upload Paper` and select a PDF or text paper.
 3. Confirm the paper sections render in the center.
-4. Click the Adapter citation `[1]`.
+4. Click a citation chip or inline citation.
 5. Watch Reference, Critique, Code, and Replication events appear.
-6. Confirm the graph adds a reference paper node, code repo node, and typed edges.
+6. Confirm the graph adds a reference paper node and typed citation edge.
 7. Run Evaluation or Adversarial manually from the agent panel.
 
 ## Optional Environment
@@ -123,7 +122,7 @@ WEAVE_PROJECT=your-team/researchai
 ANTHROPIC_API_KEY=
 ```
 
-The demo must still run without these keys. Upload parsing works without Cloudinary; Cloudinary only stores the original uploaded file when the `CLOUDINARY_*` variables are present.
+The app must still run without these keys. Upload parsing works without Cloudinary; Cloudinary only stores the original uploaded file when the `CLOUDINARY_*` variables are present.
 
 When `WANDB_API_KEY` and `WANDB_INFERENCE_PROJECT` are set, DeepPaper uses W&B Serverless Inference through its OpenAI-compatible API. When `WEAVE_PROJECT` is set, agent calls and model calls are traced in W&B Weave. Without those variables, the app falls back to deterministic fixture outputs.
 
@@ -148,16 +147,15 @@ See `prompts/README.md` for integration order.
 - Cloudinary: optional original PDF/text storage under `CLOUDINARY_UPLOAD_FOLDER`.
 - arXiv: optional paper metadata and PDF fetch.
 - Semantic Scholar: optional citation/reference resolution.
-- GitHub API: optional code repository search, with deterministic repo fixture fallback.
+- GitHub API: optional code repository search with a local unavailable-search fallback.
 
 ## Known Limits
 
 - Persistence is in memory.
-- The LoRA flow is fixture-first for demo reliability.
 - Uploaded papers are parsed immediately, but structured session data is still in memory.
 - Replication is a local dry-run scorecard, not arbitrary repo execution.
 - Citation extraction is heuristic until Team 2 upgrades it.
-- Code search uses fixture fallback when GitHub is unavailable or not configured.
+- Code search returns an unavailable-search placeholder when GitHub is unavailable or not configured.
 
 ## Hackathon Reminder
 

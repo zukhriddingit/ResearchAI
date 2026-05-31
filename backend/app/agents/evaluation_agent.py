@@ -16,40 +16,38 @@ async def run_evaluation_agent(session, paper: Paper, section=None, event_emitte
     section_id = section.id if section else _evaluation_section_id(paper)
     findings = [
         AgentFinding(
-            id="finding_missing_latency_benchmark",
+            id=new_id("finding"),
             agent="Evaluation",
             severity="medium",
-            title="Missing matched serving latency benchmark",
-            body="The main paper's no-latency claim should be evaluated with merged LoRA, unmerged LoRA, adapters, and full fine-tuning under identical batching and hardware.",
+            title="Missing matched baseline benchmark",
+            body="The main paper should be evaluated against baselines under identical data, model scale, compute budget, and reporting conditions.",
             related_paper_id=paper.id,
             related_section_id=section_id,
-            related_claim_id="claim_latency",
         ),
         AgentFinding(
-            id="finding_missing_rank_ablation",
+            id=new_id("finding"),
             agent="Evaluation",
             severity="medium",
-            title="Missing rank sensitivity ablation",
-            body="A replication plan should sweep LoRA rank values and report quality, trainable parameters, memory, and throughput to show where the efficiency tradeoff breaks.",
+            title="Missing component ablation",
+            body="A replication plan should isolate the proposed method from architecture size, training schedule, data augmentation, and implementation details.",
             related_paper_id=paper.id,
             related_section_id=section_id,
-            related_claim_id="claim_quality",
         ),
         AgentFinding(
-            id="finding_ood_code_benchmark",
+            id=new_id("finding"),
             agent="Evaluation",
             severity="medium",
             title="Benchmark coverage gap",
-            body="LoRA should be evaluated on harder OOD, long-context, and code-generation workloads before generalizing the quality claim beyond the reported tasks.",
+            body="The reported evaluation should be extended to harder out-of-distribution or stress-test settings before generalizing the strongest claims.",
             related_paper_id=paper.id,
             related_section_id=section_id,
         ),
         AgentFinding(
-            id="finding_metric_pairing",
+            id=new_id("finding"),
             agent="Evaluation",
             severity="low",
-            title="Pair quality metrics with systems metrics",
-            body="The evaluation should pair task quality with trainable parameters, memory, and tokens/sec so the efficiency claim is directly visible.",
+            title="Pair quality metrics with resource metrics",
+            body="The evaluation should pair task quality with compute, memory, latency, and parameter counts so tradeoffs are directly visible.",
             related_paper_id=paper.id,
             related_section_id=section_id,
         ),
@@ -71,7 +69,8 @@ async def run_evaluation_agent(session, paper: Paper, section=None, event_emitte
     findings = _parse_findings(llm_result, fallback, paper.id, section_id)
     if event_emitter:
         for finding in findings:
-            event_type = "experiment.missing" if finding.id.startswith("finding_missing") else "benchmark.suggested"
+            lower_finding = f"{finding.title} {finding.body}".lower()
+            event_type = "experiment.missing" if "missing" in lower_finding or "ablation" in lower_finding else "benchmark.suggested"
             event_emitter(
                 session.session_id,
                 event_type,

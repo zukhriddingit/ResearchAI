@@ -14,7 +14,7 @@ Hackathon MVP:
 - Basic live knowledge graph visualization.
 - Visible multi-agent event stream showing handoffs.
 - Optional W&B Weave instrumentation.
-- Demo must work even if external APIs fail, using fixtures.
+- Upload parsing must work even if external APIs fail, using local graceful fallbacks.
 
 Tech choices:
 
@@ -24,8 +24,8 @@ Tech choices:
 - Storage: in-memory session store plus optional JSON dump.
 - Event stream: Server-Sent Events preferred; polling fallback is acceptable.
 - Paper metadata: arXiv API and/or Semantic Scholar API.
-- Code search: GitHub API with fixture fallback.
-- LLM calls: wrap behind a simple service so the app runs with deterministic fixture outputs if no API key is present.
+- Code search: GitHub API with a local unavailable-search fallback.
+- LLM calls: wrap behind a simple service so the app runs with deterministic fallback outputs if no API key is present.
 
 Repository structure:
 
@@ -38,7 +38,6 @@ backend/
     events.py
     agents/
     services/
-    demo/
 frontend/
   src/
     components/
@@ -89,7 +88,7 @@ Never break the public API used by other teammates. If you need to change a sche
 
 Demo reliability rule:
 
-Every external API call must have a graceful fallback. The demo should still show a complete LoRA-like flow from fixture data with no API keys.
+Every external API call must have a graceful fallback. Uploading a local paper should still produce readable sections, citation chips, agent events, and graph updates with no API keys.
 
 Quality bar:
 
@@ -98,4 +97,3 @@ Quality bar:
 - Include basic tests or at least a smoke script where practical.
 - Keep UI fast and robust.
 - Prioritize visible orchestration over deep research perfection.
-

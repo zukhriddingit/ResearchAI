@@ -35,7 +35,7 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent }: Pro
       </div>
       <div className={`agent-runner ${active ? "is-running" : ""}`}>
         <strong>{active ? active.label : latest[0] ? "Paper workspace ready" : "No paper loaded"}</strong>
-        <span>{active ? active.detail : latest[0] ? humanizeEvent(latest[0]) : "Choose a demo, arXiv link, or upload."}</span>
+        <span>{active ? active.detail : latest[0] ? humanizeEvent(latest[0]) : "Load an arXiv link or upload a paper."}</span>
       </div>
       <div className="agent-grid">
         {assistantActions.map(({ agent, label, icon: Icon, detail }) => {

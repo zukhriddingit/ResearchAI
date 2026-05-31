@@ -37,7 +37,7 @@ API client requirements:
 
 UI requirements:
 
-- Top bar with DeepPaper name, arXiv URL input, Load Paper, and LoRA Demo.
+- Top bar with DeepPaper name, arXiv URL input, Load Paper, and Upload Paper.
 - Paper viewer renders sections, citation chips, and section actions.
 - Knowledge graph updates from backend graph state.
 - Agent panel displays Parser, Reference, Critique, Code, Replication, Evaluation, Adversarial, event feed, and findings.
@@ -46,10 +46,9 @@ UI requirements:
 Acceptance checks:
 
 - `npm install && npm run dev` starts.
-- Load LoRA Demo works.
+- Uploading a PDF/text paper works.
 - Paper sections and citation chips appear.
 - Clicking a citation updates events and graph.
 - Agent cards change state when events arrive.
 
 Do not build auth, PDF rendering, or hardcoded-only UI if the backend is working.
-

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.models import Claim, Paper, PaperSection, new_id
 from app.services.arxiv_client import fetch_arxiv_metadata, normalize_arxiv_id
-from app.services.fixtures import load_lora_fixture
 from app.services.pdf_parser import extract_citations, extract_title_from_text, split_into_sections
 
 
@@ -11,18 +10,6 @@ PARSER_CLAIMS_PROMPT = "Extract concise scientific claims as JSON. Include secti
 
 async def run_parser_agent(session, source_type: str, source: str, event_emitter) -> Paper:
     event_emitter(session.session_id, "agent.started", "Parser Agent started.", agent="Parser", status="running")
-
-    if source_type == "demo":
-        paper = Paper.model_validate(load_lora_fixture()["main_paper"])
-        event_emitter(
-            session.session_id,
-            "agent.finished",
-            "Parser Agent loaded the LoRA fixture.",
-            agent="Parser",
-            status="done",
-            payload={"paper_id": paper.id, "sections": len(paper.sections), "citations": len(paper.citations)},
-        )
-        return paper
 
     if source_type == "arxiv_url":
         arxiv_id = normalize_arxiv_id(source)
@@ -44,7 +31,7 @@ async def run_parser_agent(session, source_type: str, source: str, event_emitter
                         id="sec_next_steps",
                         title="Next Steps",
                         type="notes",
-                        text="PDF parsing can be enabled by Team 2. The fixture path is ready for the demo.",
+                        text="Upload the PDF for full-text parsing, citation extraction, and graph expansion.",
                     ),
                 ],
                 citations=[],

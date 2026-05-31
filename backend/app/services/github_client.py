@@ -6,8 +6,6 @@ from typing import Any
 
 import httpx
 
-from app.services.fixtures import load_lora_fixture
-
 
 async def search_repositories(query: str | Sequence[str], max_results: int = 5) -> list[dict[str, Any]]:
     queries = _normalize_queries(query)
@@ -15,7 +13,7 @@ async def search_repositories(query: str | Sequence[str], max_results: int = 5) 
         return [_fixture_repo("No GitHub search query was available.")]
 
     token = os.getenv("GITHUB_TOKEN")
-    if not token:
+    if os.getenv("DEEPPAPER_DISABLE_EXTERNAL") == "1" or not token:
         return [_fixture_repo("Fixture fallback because GITHUB_TOKEN is not configured.")]
 
     headers = {"Accept": "application/vnd.github+json"}
@@ -91,9 +89,16 @@ def _rank_repositories(repos: list[dict[str, Any]], queries: list[str]) -> list[
 
 
 def _fixture_repo(reason: str) -> dict[str, Any]:
-    repo = dict(load_lora_fixture()["code_repo"])
-    repo["match_reason"] = reason
-    return repo
+    return {
+        "name": "implementation-search-unavailable",
+        "full_name": "local/implementation-search-unavailable",
+        "html_url": None,
+        "description": "GitHub search is unavailable, so no verified implementation repository was selected.",
+        "stars": 0,
+        "language": None,
+        "updated_at": None,
+        "match_reason": reason,
+    }
 
 
 def _normalize_repo(repo: dict[str, Any], query: str) -> dict[str, Any]:

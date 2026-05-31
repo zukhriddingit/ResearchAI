@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from app.models import Citation, GraphEdge, Paper, new_id
-from app.services.fixtures import load_lora_fixture
 from app.services.llm import complete_json, reasoning_model
 from app.services.semantic_scholar_client import search_paper
 
@@ -16,8 +15,7 @@ The summary must explicitly mention the main paper title."""
 
 async def run_reference_agent(session, main_paper: Paper, citation: Citation, event_emitter) -> dict:
     event_emitter(session.session_id, "agent.started", "Reference Agent started.", agent="Reference", status="running")
-    fixture = load_lora_fixture()
-    resolved = fixture["references"].get(citation.id)
+    resolved = None
 
     query = _citation_search_query(citation)
     if not resolved and query:
@@ -68,7 +66,26 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
         }
 
     if not resolved:
-        resolved = fixture["references"]["cit_adapter"]
+        resolved = {
+            "paper": {
+                "id": f"paper_ref_{_slug(citation.raw)}",
+                "title": f"Unresolved reference {citation.raw}",
+                "authors": citation.authors,
+                "year": citation.year,
+                "abstract": citation.context_snippet,
+                "semantic_scholar_id": citation.semantic_scholar_id,
+                "arxiv_id": citation.arxiv_id,
+                "sections": [],
+                "citations": [],
+                "claims": [],
+                "is_main": False,
+            },
+            "relationship": "unknown",
+            "summary": f"Relative to {main_paper.title}, this reference could not be fully resolved from available metadata.",
+            "why_it_matters_for_main_paper": "The citation still belongs in the reading trail, but the user should verify the bibliographic details before relying on it.",
+            "supporting_evidence": [citation.context_snippet or citation.raw],
+            "possible_contradiction": None,
+        }
 
     paper = Paper.model_validate(resolved["paper"])
     fallback_summary = {

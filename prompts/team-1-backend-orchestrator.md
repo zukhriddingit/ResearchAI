@@ -9,7 +9,7 @@ You own:
 - `backend/app/store.py`
 - `backend/app/events.py`
 - `backend/app/agents/base.py`
-- `backend/app/demo/lora_fixture.json`
+- upload and arXiv loading endpoints
 - `backend/requirements.txt`
 - backend README sections
 
@@ -50,4 +50,3 @@ Acceptance checks:
 - `agents/critique/run` returns at least one finding.
 
 Do not add database complexity or break frontend API assumptions.
-

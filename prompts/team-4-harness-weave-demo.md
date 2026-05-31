@@ -44,7 +44,7 @@ README requirements:
 
 Acceptance checks:
 
-- Code Agent returns `repo.ready` from fixture if GitHub fails.
+- Code Agent returns `repo.ready` with an unavailable-search placeholder if GitHub fails.
 - Replication Agent returns scorecard and emits `replication.queued`.
 - Evaluation Agent emits `benchmark.suggested`.
 - Adversarial Agent emits `attack.found`.
@@ -52,4 +52,3 @@ Acceptance checks:
 - Submission description is ready to paste.
 
 Do not promise real replication if only a dry run is implemented.
-

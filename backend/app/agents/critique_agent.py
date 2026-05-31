@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.models import AgentFinding, Paper, new_id
-from app.services.fixtures import load_lora_fixture
 from app.services.llm import complete_json, reasoning_model
 
 
@@ -14,8 +13,27 @@ async def run_critique_agent(session, paper: Paper, section=None, main_paper: Pa
     if event_emitter:
         event_emitter(session.session_id, "agent.started", "Critique Agent started.", agent="Critique", status="running")
 
-    fixture_findings = load_lora_fixture()["critique_findings"]
-    findings = [AgentFinding.model_validate(item) for item in fixture_findings]
+    target_section_id = section.id if section else _critique_section_id(paper)
+    findings = [
+        AgentFinding(
+            id=new_id("finding"),
+            agent="Critique",
+            severity="medium",
+            title="Baseline comparison needs verification",
+            body=f"{paper.title} should be checked against matched baselines with the same data, compute budget, and evaluation protocol.",
+            related_paper_id=paper.id,
+            related_section_id=target_section_id,
+        ),
+        AgentFinding(
+            id=new_id("finding"),
+            agent="Critique",
+            severity="medium",
+            title="Ablation coverage may be incomplete",
+            body="The main claims need ablations that isolate the proposed component from training schedule, architecture scale, and dataset effects.",
+            related_paper_id=paper.id,
+            related_section_id=target_section_id,
+        ),
+    ]
 
     if section:
         findings = [finding for finding in findings if finding.related_section_id == section.id] or findings[:1]
@@ -92,3 +110,10 @@ def _parse_findings(result: dict, fallback: dict, paper_id: str, section_id: str
             )
         )
     return findings or [AgentFinding.model_validate(item) for item in fallback["findings"]]
+
+
+def _critique_section_id(paper: Paper) -> str | None:
+    for section in paper.sections:
+        if section.type in {"experiments", "evaluation", "results", "ablation_study"}:
+            return section.id
+    return paper.sections[0].id if paper.sections else None

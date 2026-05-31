@@ -140,7 +140,7 @@ function App() {
     });
   }, []);
 
-  const handleLoad = async (sourceType: "arxiv_url" | "pdf_text" | "demo", source: string) => {
+  const handleLoad = async (sourceType: "arxiv_url" | "pdf_text", source: string) => {
     setBusy(true);
     setActiveAgent("parser");
     setError(null);

@@ -21,7 +21,7 @@ export async function createSession(): Promise<{ session_id: string; created_at:
   return request("/api/sessions", { method: "POST" });
 }
 
-export async function loadPaper(sessionId: string, sourceType: "arxiv_url" | "pdf_text" | "demo", source: string): Promise<LoadPaperResponse> {
+export async function loadPaper(sessionId: string, sourceType: "arxiv_url" | "pdf_text", source: string): Promise<LoadPaperResponse> {
   return request(`/api/sessions/${sessionId}/papers/load`, {
     method: "POST",
     body: JSON.stringify({ source_type: sourceType, source })

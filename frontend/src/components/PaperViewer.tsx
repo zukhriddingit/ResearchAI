@@ -153,27 +153,18 @@ function citationsForSection(citations: Citation[], section: PaperSection) {
 export default PaperViewer;
 
 function orderSectionsForReading(sections: PaperSection[]) {
-  const priority: Record<string, number> = {
-    abstract: 0,
-    introduction: 1,
-    background: 2,
-    related_work: 3,
-    method: 4,
-    methodology: 4,
-    approach: 4,
-    experiments: 5,
-    evaluation: 5,
-    results: 6,
-    discussion: 7,
-    conclusion: 8,
-    references: 99
-  };
   return [...sections].sort((a, b) => {
-    const aPriority = priority[a.type] ?? 50;
-    const bPriority = priority[b.type] ?? 50;
+    const aPriority = sectionReadPriority(a);
+    const bPriority = sectionReadPriority(b);
     if (aPriority !== bPriority) return aPriority - bPriority;
     return (a.start_offset ?? 0) - (b.start_offset ?? 0);
   });
+}
+
+function sectionReadPriority(section: PaperSection) {
+  if (section.type === "abstract") return 0;
+  if (section.type === "references") return 2;
+  return 1;
 }
 
 function citationLabel(citation: Citation) {

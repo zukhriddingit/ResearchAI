@@ -15,7 +15,7 @@ You own:
 
 Primary goal:
 
-Given an arXiv URL or demo text, produce a `Paper` with structured sections, citations, and claims. Given a citation click, resolve or fixture-resolve the cited paper and summarize it relative to the main paper. Given a paper section, generate critique findings.
+Given an arXiv URL, uploaded PDF text, or pasted text, produce a `Paper` with structured sections, citations, and claims. Given a citation click, resolve the cited paper when possible and summarize it relative to the main paper. Given a paper section, generate critique findings.
 
 Implementation targets:
 
@@ -35,15 +35,14 @@ Agent targets:
 
 Important behavior:
 
-Reference summaries must explicitly mention the main paper. Bad: "This paper introduces adapters." Good: "Relative to LoRA, this matters because adapters are a parameter-efficient baseline and affect LoRA's latency claim."
+Reference summaries must explicitly mention the main paper. Bad: "This paper introduces adapters." Good: "Relative to the current paper, this reference matters because it is the baseline being compared against in the local claim."
 
 Acceptance checks:
 
-- Parser can parse the LoRA fixture and produce at least 4 sections and 4 citations.
+- Parser can parse uploaded paper text and produce sections, citations, and claims.
 - Reference Agent resolves `cit_adapter` with relationship and "why it matters".
 - Critique Agent returns at least 2 findings for the evaluation section.
 - No API key path works.
 - External API failure path works.
 
 Do not spend time on perfect citation extraction or create schemas incompatible with Team 1.
-

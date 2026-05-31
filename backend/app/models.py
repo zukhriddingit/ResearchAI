@@ -116,7 +116,7 @@ class SessionState(BaseModel):
 
 
 class LoadPaperRequest(BaseModel):
-    source_type: Literal["arxiv_url", "pdf_text", "demo"]
+    source_type: Literal["arxiv_url", "pdf_text"]
     source: str
 
 
@@ -132,4 +132,3 @@ class CreateSessionResponse(BaseModel):
     created_at: str
     graph: GraphState
     events: list[AgentEvent]
-
