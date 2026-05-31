@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Brain, ChevronDown, FlaskConical, GitBranch, GitPullRequest, Radar, SearchCode, ShieldAlert } from "lucide-react";
+import { Activity, BookOpen, Brain, ChevronDown, ChevronRight, FlaskConical, GitBranch, GitPullRequest, Radar, SearchCode, ShieldAlert } from "lucide-react";
 import type { AgentEvent, AgentFinding } from "../types";
 import FindingCard from "./FindingCard";
 
@@ -11,13 +11,13 @@ interface Props {
 }
 
 const assistantActions = [
-  { agent: "reference", label: "Explain citations", icon: GitPullRequest, detail: "Connect the first citation to this paper" },
-  { agent: "critique", label: "Review claims", icon: ShieldAlert, detail: "Surface weak baselines and missing checks" },
-  { agent: "code", label: "Find implementation", icon: SearchCode, detail: "Look for code that matches the paper" },
-  { agent: "replication", label: "Plan replication", icon: FlaskConical, detail: "Create a lightweight reproduction scorecard" },
-  { agent: "evaluation", label: "Improve evaluation", icon: Activity, detail: "Suggest benchmarks and metrics" },
-  { agent: "adversarial", label: "Stress test", icon: Radar, detail: "Challenge the strongest claims" },
-  { agent: "graph", label: "Refresh map", icon: GitBranch, detail: "Sync the research map" }
+  { agent: "reference", label: "Explain citations", icon: GitPullRequest, detail: "Connect the first citation to this paper", tone: "reference" },
+  { agent: "critique", label: "Review claims", icon: ShieldAlert, detail: "Surface weak baselines and missing checks", tone: "critique" },
+  { agent: "code", label: "Find implementation", icon: SearchCode, detail: "Look for code that matches the paper", tone: "code" },
+  { agent: "replication", label: "Plan replication", icon: FlaskConical, detail: "Create a lightweight reproduction scorecard", tone: "replication" },
+  { agent: "evaluation", label: "Improve evaluation", icon: Activity, detail: "Suggest benchmarks and metrics", tone: "evaluation" },
+  { agent: "adversarial", label: "Stress test", icon: Radar, detail: "Challenge the strongest claims", tone: "adversarial" },
+  { agent: "graph", label: "Refresh map", icon: GitBranch, detail: "Sync the research map", tone: "graph" }
 ];
 
 function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent }: Props) {
@@ -38,15 +38,14 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent }: Pro
         <span>{active ? active.detail : latest[0] ? humanizeEvent(latest[0]) : "Load an arXiv link or upload a paper."}</span>
       </div>
       <div className="agent-grid">
-        {assistantActions.map(({ agent, label, icon: Icon, detail }) => {
+        {assistantActions.map(({ agent, label, icon: Icon, tone }) => {
           const isActive = activeAgent === agent;
           const status = isActive ? "running" : inferStatus(agent, latest);
           return (
-            <button key={agent} className={`agent-card status-${status}`} disabled={disabled} onClick={() => onRunAgent(agent)}>
+            <button key={agent} className={`agent-card action-${tone} status-${status}`} disabled={disabled} onClick={() => onRunAgent(agent)}>
               <Icon size={16} />
               <span className="agent-name">{label}</span>
-              <small>{statusLabel(status)}</small>
-              <em>{detail}</em>
+              <ChevronRight className="agent-arrow" size={16} />
             </button>
           );
         })}
@@ -212,20 +211,6 @@ function humanizeEvent(event: AgentEvent) {
     "edge.update": "Research map link added."
   };
   return labels[event.type] ?? (event.type === "agent.finished" ? event.message : "");
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    idle: "Ready",
-    running: "Working",
-    done: "Done",
-    flagged: "Review",
-    failed: "Failed",
-    medium: "Review",
-    high: "Review",
-    low: "Done"
-  };
-  return labels[status] ?? status;
 }
 
 function formatTime(timestamp: string) {

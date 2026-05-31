@@ -17,11 +17,16 @@ function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperS
   const centerX = width / 2;
   const centerY = height / 2;
   const radius = Math.min(width, height) * 0.32;
-  const nodes = useMemo(() => graph.nodes.map((node, index) => {
-    if (index === 0 || node.status === "main") return { ...node, x: centerX, y: centerY };
-    const angle = ((index - 1) / Math.max(1, graph.nodes.length - 1)) * Math.PI * 2 - Math.PI / 2;
-    return { ...node, x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius };
-  }), [graph.nodes]);
+  const nodes = useMemo(() => {
+    const mainNodeId = graph.nodes.find((node) => node.status === "main")?.id ?? graph.nodes[0]?.id;
+    const radialNodes = graph.nodes.filter((node) => node.id !== mainNodeId);
+    return graph.nodes.map((node) => {
+      if (node.id === mainNodeId) return { ...node, x: centerX, y: centerY };
+      const radialIndex = radialNodes.findIndex((radialNode) => radialNode.id === node.id);
+      const angle = (radialIndex / Math.max(1, radialNodes.length)) * Math.PI * 2 - Math.PI / 2;
+      return { ...node, x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius };
+    });
+  }, [graph.nodes]);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const selectedPaperNode = selectedPaperId ? graph.nodes.find((node) => node.paper_id === selectedPaperId) : null;
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? graph.nodes.find((node) => node.status === "main") ?? graph.nodes[0];

@@ -89,12 +89,14 @@ function App() {
     setReadingHistory((current) => [paperId, ...current.filter((id) => id !== paperId)].slice(0, 8));
   }, []);
 
-  const applySessionState = useCallback((state: SessionState, preferredPaperId?: string | null) => {
+  const applySessionState = useCallback((state: SessionState, preferredPaperId?: string | null, historySeed: string[] = []) => {
     setSession(state);
     const fallbackPaperId = state.main_paper_id ?? state.papers.find((paper) => paper.is_main)?.id ?? state.papers[0]?.id ?? null;
     const nextPaperId = preferredPaperId ?? fallbackPaperId;
     setSelectedPaperId(nextPaperId);
-    setReadingHistory(nextPaperId ? [nextPaperId] : []);
+    const available = new Set(state.papers.map((paper) => paper.id));
+    const nextHistory = uniqueIds([nextPaperId, ...historySeed]).filter((paperId) => available.has(paperId));
+    setReadingHistory(nextHistory);
   }, []);
 
   useEffect(() => {
@@ -189,10 +191,8 @@ function App() {
     try {
       const result = await clickCitation(sessionId, citationId, sourcePaper.id);
       const state = await getSession(sessionId);
-      setSession(state);
+      applySessionState(state, result.referenced_paper.id, [sourcePaper.id, ...readingHistory]);
       setSelectedCitation(result);
-      setSelectedPaperId(result.referenced_paper.id);
-      rememberPaper(result.referenced_paper.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resolve citation");
     } finally {
@@ -239,6 +239,7 @@ function App() {
 
   const handleAnalyzePaper = async (paperId: string) => {
     if (!sessionId) return;
+    const trail = uniqueIds([paperId, activePaper?.id, mainPaper?.id, ...readingHistory]);
     setBusy(true);
     setActiveAgent("parser");
     setError(null);
@@ -248,7 +249,7 @@ function App() {
     try {
       const state = await analyzePaper(sessionId, paperId);
       setSessionId(state.session_id);
-      applySessionState(state, state.main_paper_id);
+      applySessionState(state, state.main_paper_id, trail);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to analyze referenced paper");
     } finally {
@@ -305,6 +306,10 @@ function App() {
       </main>
     </div>
   );
+}
+
+function uniqueIds(ids: Array<string | null | undefined>) {
+  return ids.filter((id, index): id is string => Boolean(id) && ids.indexOf(id) === index);
 }
 
 function titleCase(value: string) {

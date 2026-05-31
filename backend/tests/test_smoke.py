@@ -53,8 +53,13 @@ def test_uploaded_paper_agent_flow():
     promoted = client.post(f"/api/sessions/{session_id}/papers/{referenced_paper_id}/analyze").json()
     assert promoted["session_id"] != session_id
     assert promoted["main_paper_id"] == referenced_paper_id
-    assert promoted["papers"][0]["is_main"] is True
-    assert promoted["graph"]["nodes"][0]["status"] == "main"
+    promoted_papers = {paper["id"]: paper for paper in promoted["papers"]}
+    promoted_nodes = {node["paper_id"]: node for node in promoted["graph"]["nodes"] if node.get("paper_id")}
+    assert promoted_papers[referenced_paper_id]["is_main"] is True
+    assert promoted_papers[paper_id]["is_main"] is False
+    assert promoted_nodes[referenced_paper_id]["status"] == "main"
+    assert promoted_nodes[paper_id]["status"] == "referenced"
+    assert len(promoted["graph"]["edges"]) >= 1
 
     critique = client.post(
         f"/api/sessions/{session_id}/agents/critique/run",

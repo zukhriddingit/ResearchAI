@@ -297,33 +297,22 @@ async def analyze_paper_as_new_session(session_id: str, paper_id: str):
     log_event(event)
 
     paper = await _prepare_promoted_paper(new_session, source_paper)
-    store.add_paper(new_session.session_id, paper)
-
-    node = GraphNode(
-        id=f"node_{paper.id}",
-        label=paper.title,
-        type="paper",
-        status="main",
-        paper_id=paper.id,
-        metadata={
-            "authors": paper.authors,
-            "year": paper.year,
-            "arxiv_id": paper.arxiv_id,
-            "semantic_scholar_id": paper.semantic_scholar_id,
-            "source_url": paper.source_url,
-            "source_session_id": session_id,
-        },
-    )
-    store.add_node(new_session.session_id, node)
+    node = _seed_promoted_session(new_session.session_id, source_session, paper)
     emit(
         new_session.session_id,
         "paper.promoted",
         "Referenced paper promoted into a new research session.",
         agent="Parser",
         status="done",
-        payload={"paper_id": paper.id, "sections": len(paper.sections), "citations": len(paper.citations)},
+        payload={
+            "paper_id": paper.id,
+            "sections": len(paper.sections),
+            "citations": len(paper.citations),
+            "source_session_id": session_id,
+            "carried_papers": len(source_session.papers),
+        },
     )
-    emit(new_session.session_id, "node.update", "Main paper node added to graph.", agent="Graph", status="done", payload=node.model_dump())
+    emit(new_session.session_id, "node.update", "Research map carried forward with the promoted main paper.", agent="Graph", status="done", payload=node.model_dump())
     trace_agent_run("PaperPromotion", {"source_session_id": session_id, "paper_id": paper_id}, {"new_session_id": new_session.session_id})
     return store.get_session(new_session.session_id)
 
@@ -494,6 +483,57 @@ async def _prepare_promoted_paper(session, source_paper: Paper) -> Paper:
         references = await get_references(paper.semantic_scholar_id)
         paper.citations = _citations_from_semantic_references(references)
     return paper
+
+
+def _seed_promoted_session(session_id: str, source_session, promoted_paper: Paper) -> GraphNode:
+    promoted_paper.is_main = True
+    for source_paper in source_session.papers:
+        if source_paper.id == promoted_paper.id:
+            continue
+        carried_paper = source_paper.model_copy(deep=True)
+        carried_paper.is_main = False
+        store.add_paper(session_id, carried_paper)
+    store.add_paper(session_id, promoted_paper)
+
+    promoted_node: GraphNode | None = None
+    for source_node in source_session.graph.nodes:
+        node = source_node.model_copy(deep=True)
+        if node.paper_id == promoted_paper.id:
+            node.label = promoted_paper.title
+            node.status = "main"
+            node.metadata = {**node.metadata, **_paper_node_metadata(promoted_paper, source_session.session_id)}
+            promoted_node = node
+        elif node.status == "main":
+            node.status = "referenced"
+            node.metadata = {**node.metadata, "previous_main": True, "source_session_id": source_session.session_id}
+        store.add_node(session_id, node)
+
+    if promoted_node is None:
+        promoted_node = GraphNode(
+            id=f"node_{promoted_paper.id}",
+            label=promoted_paper.title,
+            type="paper",
+            status="main",
+            paper_id=promoted_paper.id,
+            metadata=_paper_node_metadata(promoted_paper, source_session.session_id),
+        )
+        store.add_node(session_id, promoted_node)
+
+    for source_edge in source_session.graph.edges:
+        store.add_edge(session_id, source_edge.model_copy(deep=True))
+
+    return promoted_node
+
+
+def _paper_node_metadata(paper: Paper, source_session_id: str) -> dict[str, Any]:
+    return {
+        "authors": paper.authors,
+        "year": paper.year,
+        "arxiv_id": paper.arxiv_id,
+        "semantic_scholar_id": paper.semantic_scholar_id,
+        "source_url": paper.source_url,
+        "source_session_id": source_session_id,
+    }
 
 
 def _citations_from_semantic_references(references: list[dict[str, Any]], limit: int = 30) -> list[Citation]:
