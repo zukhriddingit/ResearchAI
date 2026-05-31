@@ -50,8 +50,9 @@ export async function getEvents(sessionId: string): Promise<AgentEvent[]> {
   return request(`/api/sessions/${sessionId}/events`);
 }
 
-export async function clickCitation(sessionId: string, citationId: string): Promise<CitationClickResponse> {
-  return request(`/api/sessions/${sessionId}/citations/${citationId}/click`, { method: "POST" });
+export async function clickCitation(sessionId: string, citationId: string, paperId?: string): Promise<CitationClickResponse> {
+  const query = paperId ? `?paper_id=${encodeURIComponent(paperId)}` : "";
+  return request(`/api/sessions/${sessionId}/citations/${citationId}/click${query}`, { method: "POST" });
 }
 
 export async function runAgent(sessionId: string, agentName: string, payload: AgentRunRequest) {

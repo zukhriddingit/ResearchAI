@@ -26,6 +26,7 @@ function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgen
     : paper.abstract
       ? [{ id: `${paper.id}_abstract`, title: "Abstract", type: "abstract", text: paper.abstract }]
       : [];
+  const displaySections = orderSectionsForReading(sections);
 
   return (
     <div className="paper-viewer">
@@ -56,13 +57,13 @@ function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgen
           </button>
         </div>
       </div>
-      {sections.length === 0 && (
+      {displaySections.length === 0 && (
         <div className="reader-empty compact">
           <h2>{paper.title}</h2>
           <p>No abstract or extracted text is available for this referenced paper yet.</p>
         </div>
       )}
-      {sections.map((section) => (
+      {displaySections.map((section) => (
         <SectionBlock
           key={section.id}
           section={section}
@@ -89,29 +90,32 @@ function SectionBlock({ section, citations, busy, activeCitationId, onCitationCl
   const [showAllCitations, setShowAllCitations] = useState(false);
   const text = expanded ? section.text : `${section.text.slice(0, 1200)}...`;
   const visibleCitations = showAllCitations ? citations : citations.slice(0, 18);
+  const isReferenceSection = section.type === "references";
 
   return (
     <article className="section-block">
       <div className="section-heading">
         <h3>{section.title}</h3>
-        <div className="section-actions">
-          <button className="mini-button" disabled={busy} onClick={() => onRunAgent("critique", { section_id: section.id })}>
-            <Bot size={14} />
-            <span>Critique this section</span>
-          </button>
-          <button className="mini-button" disabled={busy} onClick={() => onRunAgent("evaluation", { section_id: section.id })}>
-            <FlaskConical size={14} />
-            <span>Evaluate</span>
-          </button>
-          <button className="mini-button" disabled={busy} onClick={() => onRunAgent("code", { section_id: section.id })}>
-            <SearchCode size={14} />
-            <span>Find code</span>
-          </button>
-          <button className="mini-button" disabled={busy} onClick={() => onRunAgent("replication", { section_id: section.id })}>
-            <FlaskConical size={14} />
-            <span>Queue replication</span>
-          </button>
-        </div>
+        {!isReferenceSection && (
+          <div className="section-actions">
+            <button className="mini-button" disabled={busy} onClick={() => onRunAgent("critique", { section_id: section.id })}>
+              <Bot size={14} />
+              <span>Critique this section</span>
+            </button>
+            <button className="mini-button" disabled={busy} onClick={() => onRunAgent("evaluation", { section_id: section.id })}>
+              <FlaskConical size={14} />
+              <span>Evaluate</span>
+            </button>
+            <button className="mini-button" disabled={busy} onClick={() => onRunAgent("code", { section_id: section.id })}>
+              <SearchCode size={14} />
+              <span>Find code</span>
+            </button>
+            <button className="mini-button" disabled={busy} onClick={() => onRunAgent("replication", { section_id: section.id })}>
+              <FlaskConical size={14} />
+              <span>Queue replication</span>
+            </button>
+          </div>
+        )}
       </div>
       <div className="section-text">{renderTextWithCitations(text, citations, busy, activeCitationId, onCitationClick)}</div>
       {section.text.length > 1200 && (
@@ -147,6 +151,30 @@ function citationsForSection(citations: Citation[], section: PaperSection) {
 }
 
 export default PaperViewer;
+
+function orderSectionsForReading(sections: PaperSection[]) {
+  const priority: Record<string, number> = {
+    abstract: 0,
+    introduction: 1,
+    background: 2,
+    related_work: 3,
+    method: 4,
+    methodology: 4,
+    approach: 4,
+    experiments: 5,
+    evaluation: 5,
+    results: 6,
+    discussion: 7,
+    conclusion: 8,
+    references: 99
+  };
+  return [...sections].sort((a, b) => {
+    const aPriority = priority[a.type] ?? 50;
+    const bPriority = priority[b.type] ?? 50;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return (a.start_offset ?? 0) - (b.start_offset ?? 0);
+  });
+}
 
 function citationLabel(citation: Citation) {
   if (citation.title) return citation.title;

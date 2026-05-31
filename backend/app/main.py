@@ -208,21 +208,28 @@ async def upload_paper(session_id: str, file: UploadFile = File(...)):
 
 
 @app.post("/api/sessions/{session_id}/citations/{citation_id}/click")
-async def click_citation(session_id: str, citation_id: str):
+async def click_citation(session_id: str, citation_id: str, paper_id: str | None = None):
     session = _session_or_404(session_id)
-    main_paper = _main_paper_or_404(session)
-    citation = _citation_or_404(main_paper, citation_id)
+    source_paper = _paper_by_id(session, paper_id) if paper_id else _main_paper_or_404(session)
+    citation = _citation_or_404(source_paper, citation_id)
 
-    emit(session_id, "citation.clicked", f"Citation {citation.raw} clicked.", agent="Reader", status="done", payload={"citation_id": citation.id})
-    emit(session_id, "citation.resolving", "Reference Agent resolving citation in main-paper context.", agent="Reference", status="running")
+    emit(
+        session_id,
+        "citation.clicked",
+        f"Citation {citation.raw} clicked.",
+        agent="Reader",
+        status="done",
+        payload={"citation_id": citation.id, "paper_id": source_paper.id},
+    )
+    emit(session_id, "citation.resolving", "Reference Agent resolving citation in reading context.", agent="Reference", status="running")
     reference_result = await traced_agent_call(
         "Reference",
-        {"session_id": session_id, "main_paper_id": main_paper.id, "citation_id": citation.id},
-        lambda: run_reference_agent(session, main_paper, citation, emit),
+        {"session_id": session_id, "source_paper_id": source_paper.id, "citation_id": citation.id},
+        lambda: run_reference_agent(session, source_paper, citation, emit),
     )
     referenced_paper: Paper = reference_result["referenced_paper"]
     citation.resolved_paper_id = referenced_paper.id
-    store.add_paper(session_id, main_paper)
+    store.add_paper(session_id, source_paper)
     store.add_paper(session_id, referenced_paper)
 
     ref_node = GraphNode(
@@ -239,7 +246,7 @@ async def click_citation(session_id: str, citation_id: str):
     emit(
         session_id,
         "citation.resolved",
-        "Citation resolved relative to the main paper.",
+        "Citation resolved relative to the current paper.",
         agent="Reference",
         status="done",
         payload={"citation": citation.model_dump(), "summary": reference_result["summary"]},

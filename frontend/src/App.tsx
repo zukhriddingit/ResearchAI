@@ -177,16 +177,17 @@ function App() {
   };
 
   const handleCitationClick = async (citationId: string) => {
-    if (!sessionId || !mainPaper) return;
-    const citation = mainPaper.citations.find((item) => item.id === citationId);
+    const sourcePaper = activePaper ?? mainPaper;
+    if (!sessionId || !sourcePaper) return;
+    const citation = sourcePaper.citations.find((item) => item.id === citationId);
     setBusy(true);
     setActiveAgent("reference");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation({ id: citationId, label: citation?.title ?? citation?.raw ?? "citation" });
-    appendLocalEvent("Reference", `Resolving ${citation?.raw ?? "citation"} against the main paper.`);
+    appendLocalEvent("Reference", `Resolving ${citation?.raw ?? "citation"} against ${sourcePaper.title}.`);
     try {
-      const result = await clickCitation(sessionId, citationId);
+      const result = await clickCitation(sessionId, citationId, sourcePaper.id);
       const state = await getSession(sessionId);
       setSession(state);
       setSelectedCitation(result);
