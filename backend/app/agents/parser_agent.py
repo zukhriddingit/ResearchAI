@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.models import Claim, Paper, PaperSection, new_id
 from app.services.arxiv_client import fetch_arxiv_metadata, normalize_arxiv_id
 from app.services.fixtures import load_lora_fixture
-from app.services.pdf_parser import extract_citations, split_into_sections
+from app.services.pdf_parser import extract_citations, extract_title_from_text, split_into_sections
 
 
 PARSER_CLAIMS_PROMPT = "Extract concise scientific claims as JSON. Include section id, confidence, and evidence."
@@ -57,9 +57,10 @@ async def run_parser_agent(session, source_type: str, source: str, event_emitter
     sections = split_into_sections(source)
     body = source.strip() or "No paper text provided."
     citations = extract_citations(body, sections)
+    title = extract_title_from_text(body) or "Untitled Uploaded Paper"
     paper = Paper(
         id=new_id("paper"),
-        title="Untitled Uploaded Paper",
+        title=title,
         authors=[],
         abstract=sections[0].text[:500] if sections else body[:500],
         sections=sections or [PaperSection(id="sec_text", title="Paper Text", type="body", text=body)],
@@ -87,4 +88,3 @@ def _heuristic_claims(text: str, section_id: str) -> list[Claim]:
                 )
             )
     return claims[:6]
-

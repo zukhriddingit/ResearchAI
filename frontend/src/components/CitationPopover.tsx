@@ -1,11 +1,30 @@
-import { Link2 } from "lucide-react";
+import { Link2, Loader2 } from "lucide-react";
 import type { CitationClickResponse } from "../types";
 
 interface Props {
-  result: CitationClickResponse;
+  result: CitationClickResponse | null;
+  pendingCitation?: { id: string; label: string } | null;
 }
 
-function CitationPopover({ result }: Props) {
+function CitationPopover({ result, pendingCitation }: Props) {
+  if (!result) {
+    return (
+      <aside className="citation-detail citation-detail-loading">
+        <div className="panel-title">
+          <Loader2 className="spin" size={16} />
+          <span>Resolving citation</span>
+        </div>
+        <h3>{pendingCitation?.label ?? "Citation"}</h3>
+        <p>Reference Agent is resolving this citation against the main paper context.</p>
+        <div className="skeleton-stack" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="citation-detail">
       <div className="panel-title">
@@ -29,4 +48,3 @@ function CitationPopover({ result }: Props) {
 }
 
 export default CitationPopover;
-

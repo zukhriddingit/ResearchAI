@@ -10,6 +10,7 @@ DeepPaper is a multi-agent research reading app for the Multi-Agent Orchestratio
 - In-memory sessions, graph state, findings, and agent event log.
 - Server-Sent Events endpoint with frontend polling fallback.
 - Deterministic LoRA demo fixture that works with no API keys.
+- PDF/text upload with optional original-file storage in Cloudinary.
 - React/Vite frontend with paper reader, citation chips, graph panel, and agent feed.
 - Harness agents for code search, dry-run replication scoring, benchmark suggestions, and adversarial stress tests.
 - Teammate prompt files under `prompts/`.
@@ -68,6 +69,8 @@ npm run dev
 
 Frontend URL: `http://localhost:5173`
 
+Team 3 frontend details live in `frontend/README.md`.
+
 If your backend runs somewhere else:
 
 ```bash
@@ -77,7 +80,7 @@ VITE_API_URL=http://localhost:8000 npm run dev
 ## Demo Flow
 
 1. Open the frontend.
-2. Click `LoRA Demo`.
+2. Click `LoRA Demo` or `Upload Paper`.
 3. Confirm the paper sections render in the center.
 4. Click the Adapter citation `[1]`.
 5. Watch Reference, Critique, Code, and Replication events appear.
@@ -86,17 +89,42 @@ VITE_API_URL=http://localhost:8000 npm run dev
 
 ## Optional Environment
 
-Copy `.env.example` to `backend/.env` or export these variables in your shell:
+Copy `backend/.env.example` to `backend/.env` and fill in your values:
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+For W&B, the important fields are:
+
+```bash
+WANDB_API_KEY=your_wandb_api_key_here
+WANDB_INFERENCE_PROJECT=your-team/deeppaper
+WEAVE_PROJECT=your-team/deeppaper
+```
+
+Full optional config:
 
 ```bash
 SEMANTIC_SCHOLAR_API_KEY=
 GITHUB_TOKEN=
-ANTHROPIC_API_KEY=
-WEAVE_PROJECT=deeppaper
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+CLOUDINARY_UPLOAD_FOLDER=researchai/papers
 WANDB_API_KEY=
+WANDB_INFERENCE_PROJECT=your-team/researchai
+WANDB_INFERENCE_BASE_URL=https://api.inference.wandb.ai/v1
+WANDB_INFERENCE_MODEL=meta-llama/Llama-3.1-8B-Instruct
+WANDB_INFERENCE_REASONING_MODEL=deepseek-ai/DeepSeek-R1-0528
+WEAVE_PROJECT=your-team/researchai
+ANTHROPIC_API_KEY=
 ```
 
-The demo still runs without these keys. W&B Weave tracing is a no-op unless both `WEAVE_PROJECT` and `WANDB_API_KEY` are configured.
+The demo must still run without these keys. Upload parsing works without Cloudinary; Cloudinary only stores the original uploaded file when the `CLOUDINARY_*` variables are present.
+
+When `WANDB_API_KEY` and `WANDB_INFERENCE_PROJECT` are set, DeepPaper uses W&B Serverless Inference through its OpenAI-compatible API. When `WEAVE_PROJECT` is set, agent calls and model calls are traced in W&B Weave. Without those variables, the app falls back to deterministic fixture outputs.
 
 ## Team Workflow
 
@@ -112,7 +140,9 @@ See `prompts/README.md` for integration order.
 ## Sponsor Tool Usage
 
 - W&B Weave: optional tracing hooks in `backend/app/services/weave_tracing.py`.
-- Anthropic API: optional LLM wrapper in `backend/app/services/llm.py`.
+- W&B Serverless Inference: primary model provider in `backend/app/services/llm.py`.
+- Anthropic API: optional fallback provider in `backend/app/services/llm.py`.
+- Cloudinary: optional original PDF/text storage under `CLOUDINARY_UPLOAD_FOLDER`.
 - arXiv: optional paper metadata and PDF fetch.
 - Semantic Scholar: optional citation/reference resolution.
 - GitHub API: optional code repository search, with deterministic repo fixture fallback.
@@ -121,6 +151,7 @@ See `prompts/README.md` for integration order.
 
 - Persistence is in memory.
 - The LoRA flow is fixture-first for demo reliability.
+- Uploaded papers are parsed immediately, but structured session data is still in memory.
 - Replication is a local dry-run scorecard, not arbitrary repo execution.
 - Citation extraction is heuristic until Team 2 upgrades it.
 - Code search uses fixture fallback when GitHub is unavailable or not configured.

@@ -1,4 +1,8 @@
+import os
+
 from fastapi.testclient import TestClient
+
+os.environ["DEEPPAPER_DISABLE_EXTERNAL"] = "1"
 
 from app.main import app
 from app.services import weave_tracing
@@ -72,3 +76,27 @@ def test_weave_noop_without_env(monkeypatch):
     assert weave_tracing.init_weave() is False
     weave_tracing.trace_agent_run("Test", {"input": True}, {"output": True})
     weave_tracing.log_event({"type": "noop"})
+
+
+def test_text_upload_flow():
+    session = client.post("/api/sessions").json()
+    session_id = session["session_id"]
+    text = (
+        "2602.10067v3 [cs.LG] 19 Feb 2026\n"
+        "Grounding Supervision in Language Features\n"
+        "Mina Park, Lucas Chen, Aria Patel\n\n"
+        "Abstract\n"
+        "We propose a tiny upload test paper for DeepPaper. It improves the demo upload flow.\n\n"
+        "Methodology\n"
+        "The method cites prior work [1] and checks that uploaded text becomes sections.\n\n"
+        "References\n"
+        "[1] A small fixture reference."
+    )
+    uploaded = client.post(
+        f"/api/sessions/{session_id}/papers/upload",
+        files={"file": ("2602.10067v3 (1).txt", text.encode("utf-8"), "text/plain")},
+    ).json()
+    assert uploaded["paper"]["title"] == "Grounding Supervision in Language Features"
+    assert uploaded["graph"]["nodes"][0]["label"] == "Grounding Supervision in Language Features"
+    assert uploaded["paper"]["sections"]
+    assert uploaded["graph"]["nodes"]

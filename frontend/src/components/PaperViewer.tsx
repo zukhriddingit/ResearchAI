@@ -1,20 +1,22 @@
-import { Bot, ChevronDown, ChevronUp, FlaskConical, SearchCode } from "lucide-react";
+import { Bot, ChevronDown, ChevronUp, ExternalLink, FlaskConical, SearchCode } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { Citation, Paper, PaperSection } from "../types";
 
 interface Props {
   paper: Paper | null;
   busy: boolean;
+  activeCitationId: string | null;
   onCitationClick: (citationId: string) => void;
   onRunAgent: (agentName: string, payload?: { section_id?: string }) => void;
 }
 
-function PaperViewer({ paper, busy, onCitationClick, onRunAgent }: Props) {
+function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgent }: Props) {
   if (!paper) {
     return (
       <div className="reader-empty">
         <h2>DeepPaper</h2>
-        <p>Load a paper to start the agent graph.</p>
+        <p>Open a paper to begin.</p>
       </div>
     );
   }
@@ -29,6 +31,12 @@ function PaperViewer({ paper, busy, onCitationClick, onRunAgent }: Props) {
             {paper.authors.slice(0, 4).join(", ")}
             {paper.year ? ` | ${paper.year}` : ""}
           </p>
+          {paper.source_url && (
+            <a className="source-link" href={paper.source_url} target="_blank" rel="noreferrer">
+              <ExternalLink size={13} />
+              <span>Original paper</span>
+            </a>
+          )}
         </div>
         <div className="paper-actions">
           <button className="icon-button" disabled={busy} onClick={() => onRunAgent("critique")} title="Run Critique Agent">
@@ -48,6 +56,7 @@ function PaperViewer({ paper, busy, onCitationClick, onRunAgent }: Props) {
           section={section}
           citations={citationsForSection(paper.citations, section)}
           busy={busy}
+          activeCitationId={activeCitationId}
           onCitationClick={onCitationClick}
           onRunAgent={onRunAgent}
         />
@@ -56,10 +65,11 @@ function PaperViewer({ paper, busy, onCitationClick, onRunAgent }: Props) {
   );
 }
 
-function SectionBlock({ section, citations, busy, onCitationClick, onRunAgent }: {
+function SectionBlock({ section, citations, busy, activeCitationId, onCitationClick, onRunAgent }: {
   section: PaperSection;
   citations: Citation[];
   busy: boolean;
+  activeCitationId: string | null;
   onCitationClick: (citationId: string) => void;
   onRunAgent: (agentName: string, payload?: { section_id?: string }) => void;
 }) {
@@ -73,15 +83,23 @@ function SectionBlock({ section, citations, busy, onCitationClick, onRunAgent }:
         <div className="section-actions">
           <button className="mini-button" disabled={busy} onClick={() => onRunAgent("critique", { section_id: section.id })}>
             <Bot size={14} />
-            <span>Critique</span>
+            <span>Critique this section</span>
           </button>
           <button className="mini-button" disabled={busy} onClick={() => onRunAgent("evaluation", { section_id: section.id })}>
             <FlaskConical size={14} />
             <span>Evaluate</span>
           </button>
+          <button className="mini-button" disabled={busy} onClick={() => onRunAgent("code", { section_id: section.id })}>
+            <SearchCode size={14} />
+            <span>Find code</span>
+          </button>
+          <button className="mini-button" disabled={busy} onClick={() => onRunAgent("replication", { section_id: section.id })}>
+            <FlaskConical size={14} />
+            <span>Queue replication</span>
+          </button>
         </div>
       </div>
-      <p className="section-text">{text}</p>
+      <div className="section-text">{renderTextWithCitations(text, citations, busy, activeCitationId, onCitationClick)}</div>
       {section.text.length > 1200 && (
         <button className="text-button" onClick={() => setExpanded((value) => !value)}>
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -108,3 +126,53 @@ function citationsForSection(citations: Citation[], section: PaperSection) {
 }
 
 export default PaperViewer;
+
+function renderTextWithCitations(
+  text: string,
+  citations: Citation[],
+  busy: boolean,
+  activeCitationId: string | null,
+  onCitationClick: (citationId: string) => void
+) {
+  const matches = citations
+    .flatMap((citation) => {
+      const items: Array<{ start: number; end: number; citation: Citation }> = [];
+      let cursor = text.indexOf(citation.raw);
+      while (cursor >= 0) {
+        items.push({ start: cursor, end: cursor + citation.raw.length, citation });
+        cursor = text.indexOf(citation.raw, cursor + citation.raw.length);
+      }
+      return items;
+    })
+    .sort((a, b) => a.start - b.start);
+
+  const nonOverlapping = matches.reduce<Array<{ start: number; end: number; citation: Citation }>>((acc, match) => {
+    const previous = acc[acc.length - 1];
+    if (!previous || match.start >= previous.end) acc.push(match);
+    return acc;
+  }, []);
+
+  if (nonOverlapping.length === 0) return text;
+
+  const chunks: ReactNode[] = [];
+  let cursor = 0;
+  nonOverlapping.forEach((match) => {
+    if (match.start > cursor) {
+      chunks.push(<span key={`text-${cursor}`}>{text.slice(cursor, match.start)}</span>);
+    }
+    chunks.push(
+      <button
+        key={`${match.citation.id}-${match.start}`}
+        className={`inline-citation ${activeCitationId === match.citation.id ? "is-active" : ""}`}
+        disabled={busy}
+        title={match.citation.title ?? match.citation.raw}
+        onClick={() => onCitationClick(match.citation.id)}
+      >
+        {match.citation.raw}
+      </button>
+    );
+    cursor = match.end;
+  });
+  if (cursor < text.length) chunks.push(<span key={`text-${cursor}`}>{text.slice(cursor)}</span>);
+  return chunks;
+}

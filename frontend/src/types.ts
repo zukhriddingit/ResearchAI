@@ -113,10 +113,26 @@ export interface CitationClickResponse {
   findings: AgentFinding[];
 }
 
+export interface LoadPaperResponse {
+  paper: Paper;
+  graph: GraphState;
+  events: AgentEvent[];
+}
+
+export interface UploadPaperResponse extends LoadPaperResponse {
+  cloudinary_asset?: {
+    public_id?: string | null;
+    secure_url?: string | null;
+    resource_type?: string | null;
+    bytes?: number | null;
+    format?: string | null;
+    folder?: string | null;
+  } | null;
+}
+
 export interface AgentRunRequest {
   paper_id?: string;
   section_id?: string;
   citation_id?: string;
   mode?: "manual" | "auto";
 }
-

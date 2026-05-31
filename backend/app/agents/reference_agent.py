@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from app.models import Citation, GraphEdge, Paper, new_id
 from app.services.fixtures import load_lora_fixture
+from app.services.llm import complete_json, reasoning_model
 from app.services.semantic_scholar_client import search_paper
 
 
-REFERENCE_CONTEXTUALIZATION_PROMPT = (
-    "Explain this reference only relative to the main paper. Return relationship, summary, why it matters, evidence, and contradictions."
-)
+REFERENCE_CONTEXTUALIZATION_PROMPT = """You are the Reference Agent for DeepPaper.
+Explain the cited paper only relative to the main paper.
+Use one relationship from: extends, uses, contradicts, inspires, baseline_for, contextualizes, unknown.
+The summary must explicitly mention the main paper title."""
 
 
 async def run_reference_agent(session, main_paper: Paper, citation: Citation, event_emitter) -> dict:
@@ -43,7 +45,30 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
         resolved = fixture["references"]["cit_adapter"]
 
     paper = Paper.model_validate(resolved["paper"])
-    relationship = resolved.get("relationship", "unknown")
+    fallback_summary = {
+        "relationship": resolved.get("relationship", "unknown"),
+        "summary": resolved.get("summary", ""),
+        "why_it_matters_for_main_paper": resolved.get("why_it_matters_for_main_paper", ""),
+        "supporting_evidence": resolved.get("supporting_evidence", []),
+        "possible_contradiction": resolved.get("possible_contradiction"),
+    }
+    llm_summary = await complete_json(
+        REFERENCE_CONTEXTUALIZATION_PROMPT,
+        (
+            f"Main paper: {main_paper.title}\n"
+            f"Main abstract: {main_paper.abstract or ''}\n"
+            f"Citation context: {citation.context_snippet or citation.raw}\n"
+            f"Referenced paper: {paper.title}\n"
+            f"Referenced abstract: {paper.abstract or ''}\n"
+            "Return JSON with relationship, summary, why_it_matters_for_main_paper, "
+            "supporting_evidence as a list, and possible_contradiction as string or null."
+        ),
+        fallback_summary,
+        model=reasoning_model(),
+        temperature=0.1,
+        max_tokens=700,
+    )
+    relationship = str(llm_summary.get("relationship") or fallback_summary["relationship"])
     edge = GraphEdge(
         id=f"edge_{main_paper.id}_{paper.id}",
         source=f"node_{main_paper.id}",
@@ -51,14 +76,16 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
         type=relationship,
         label=relationship,
         confidence=0.78,
-        evidence=resolved.get("supporting_evidence", []),
+        evidence=_as_list(llm_summary.get("supporting_evidence")) or fallback_summary["supporting_evidence"],
     )
     summary = {
         "relationship": relationship,
-        "summary": resolved.get("summary", ""),
-        "why_it_matters_for_main_paper": resolved.get("why_it_matters_for_main_paper", ""),
-        "supporting_evidence": resolved.get("supporting_evidence", []),
-        "possible_contradiction": resolved.get("possible_contradiction"),
+        "summary": str(llm_summary.get("summary") or fallback_summary["summary"]),
+        "why_it_matters_for_main_paper": str(
+            llm_summary.get("why_it_matters_for_main_paper") or fallback_summary["why_it_matters_for_main_paper"]
+        ),
+        "supporting_evidence": _as_list(llm_summary.get("supporting_evidence")) or fallback_summary["supporting_evidence"],
+        "possible_contradiction": llm_summary.get("possible_contradiction"),
         "edge": edge.model_dump(),
     }
     event_emitter(
@@ -71,3 +98,10 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
     )
     return {"referenced_paper": paper, "summary": summary, "edge": edge}
 
+
+def _as_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []

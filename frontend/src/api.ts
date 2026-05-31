@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentRunRequest, CitationClickResponse, SessionState } from "./types";
+import type { AgentEvent, AgentRunRequest, CitationClickResponse, LoadPaperResponse, SessionState, UploadPaperResponse } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -21,11 +21,25 @@ export async function createSession(): Promise<{ session_id: string; created_at:
   return request("/api/sessions", { method: "POST" });
 }
 
-export async function loadPaper(sessionId: string, sourceType: "arxiv_url" | "pdf_text" | "demo", source: string) {
+export async function loadPaper(sessionId: string, sourceType: "arxiv_url" | "pdf_text" | "demo", source: string): Promise<LoadPaperResponse> {
   return request(`/api/sessions/${sessionId}/papers/load`, {
     method: "POST",
     body: JSON.stringify({ source_type: sourceType, source })
   });
+}
+
+export async function uploadPaper(sessionId: string, file: File): Promise<UploadPaperResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/papers/upload`, {
+    method: "POST",
+    body: form
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Upload failed with ${response.status}`);
+  }
+  return response.json() as Promise<UploadPaperResponse>;
 }
 
 export async function getSession(sessionId: string): Promise<SessionState> {
@@ -60,4 +74,3 @@ export function subscribeEvents(sessionId: string, onEvent: (event: AgentEvent) 
 export function apiBase() {
   return API_BASE;
 }
-

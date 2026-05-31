@@ -1,31 +1,44 @@
 import { GitBranch } from "lucide-react";
-import type { GraphState } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { GraphNode, GraphState } from "../types";
 
 interface Props {
   graph: GraphState;
 }
 
 function KnowledgeGraph({ graph }: Props) {
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const width = 360;
   const height = 520;
   const centerX = width / 2;
   const centerY = height / 2;
   const radius = Math.min(width, height) * 0.32;
-  const nodes = graph.nodes.map((node, index) => {
+  const nodes = useMemo(() => graph.nodes.map((node, index) => {
     if (index === 0 || node.status === "main") return { ...node, x: centerX, y: centerY };
     const angle = ((index - 1) / Math.max(1, graph.nodes.length - 1)) * Math.PI * 2 - Math.PI / 2;
     return { ...node, x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius };
-  });
+  }), [graph.nodes]);
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? graph.nodes.find((node) => node.status === "main") ?? graph.nodes[0];
+
+  useEffect(() => {
+    if (!graph.nodes.length) {
+      setSelectedNodeId(null);
+      return;
+    }
+    if (!selectedNodeId || !graph.nodes.some((node) => node.id === selectedNodeId)) {
+      setSelectedNodeId(graph.nodes.find((node) => node.status === "main")?.id ?? graph.nodes[0].id);
+    }
+  }, [graph.nodes, selectedNodeId]);
 
   return (
     <div className="panel graph-panel">
       <div className="panel-title">
         <GitBranch size={16} />
-        <span>Knowledge Graph</span>
+        <span>Research Map</span>
       </div>
       {nodes.length === 0 ? (
-        <div className="empty-graph">Load the demo to seed the main paper node.</div>
+        <div className="empty-graph">No map yet.</div>
       ) : (
         <svg className="graph-svg" viewBox={`0 0 ${width} ${height}`} role="img">
           {graph.edges.map((edge) => {
@@ -44,10 +57,23 @@ function KnowledgeGraph({ graph }: Props) {
             );
           })}
           {nodes.map((node) => (
-            <g key={node.id} transform={`translate(${node.x} ${node.y})`} className="graph-node">
+            <g
+              key={node.id}
+              transform={`translate(${node.x} ${node.y})`}
+              className={`graph-node ${selectedNode?.id === node.id ? "is-selected" : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedNodeId(node.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") setSelectedNodeId(node.id);
+              }}
+            >
               <circle r={node.status === "main" ? 34 : 25} className={`node-circle node-${node.type} status-${node.status}`} />
               <text y={4} className="node-initials">
                 {initials(node.label)}
+              </text>
+              <text y={node.status === "main" ? 51 : 42} className="node-label">
+                {shortLabel(node.label)}
               </text>
               <title>{node.label}</title>
             </g>
@@ -55,10 +81,11 @@ function KnowledgeGraph({ graph }: Props) {
         </svg>
       )}
       <div className="legend-row">
-        <span><i className="dot main-dot" /> main</span>
+        <span><i className="dot main-dot" /> current</span>
         <span><i className="dot ref-dot" /> paper</span>
         <span><i className="dot code-dot" /> code</span>
       </div>
+      {selectedNode && <NodeDetail node={selectedNode} />}
     </div>
   );
 }
@@ -72,5 +99,37 @@ function initials(label: string) {
     .join("");
 }
 
-export default KnowledgeGraph;
+function shortLabel(label: string) {
+  return label.length > 20 ? `${label.slice(0, 18)}...` : label;
+}
 
+function NodeDetail({ node }: { node: GraphNode }) {
+  const metadataRows = Object.entries(node.metadata ?? {}).filter(([, value]) => value !== null && value !== undefined).slice(0, 4);
+  return (
+    <div className="node-detail">
+      <div className="node-detail-head">
+        <strong>{node.label}</strong>
+        <span>{node.status}</span>
+      </div>
+      <p>{node.type === "code" ? "Implementation artifact" : "Research paper"}</p>
+      {metadataRows.length > 0 && (
+        <dl>
+          {metadataRows.map(([key, value]) => (
+            <div key={key}>
+              <dt>{key.replace(/_/g, " ")}</dt>
+              <dd>{formatValue(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+function formatValue(value: unknown) {
+  if (Array.isArray(value)) return value.slice(0, 3).join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+export default KnowledgeGraph;

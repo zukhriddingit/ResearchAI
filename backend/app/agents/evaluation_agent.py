@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from app.models import AgentFinding, Paper
+from app.models import AgentFinding, Paper, new_id
+from app.services.llm import complete_json, reasoning_model
+
+
+EVALUATION_PROMPT = """You are the Evaluation Agent for DeepPaper.
+Suggest harder, newer, or more decision-relevant benchmarks for the main paper.
+Return actionable findings that a code or replication agent could use."""
 
 
 async def run_evaluation_agent(session, paper: Paper, section=None, event_emitter=None) -> list[AgentFinding]:
@@ -48,6 +54,21 @@ async def run_evaluation_agent(session, paper: Paper, section=None, event_emitte
             related_section_id=section_id,
         ),
     ]
+    fallback = {"findings": [finding.model_dump() for finding in findings]}
+    llm_result = await complete_json(
+        EVALUATION_PROMPT,
+        (
+            f"Paper: {paper.title}\n"
+            f"Abstract: {paper.abstract or ''}\n"
+            f"Evaluation text: {(section.text if section else ' '.join(s.text for s in paper.sections if s.type in {'evaluation', 'experiments', 'results'}))[:3500]}\n"
+            "Return JSON: {\"findings\": [{\"severity\":\"low|medium|high\", \"title\":\"...\", \"body\":\"...\"}]}"
+        ),
+        fallback,
+        model=reasoning_model(),
+        temperature=0.2,
+        max_tokens=800,
+    )
+    findings = _parse_findings(llm_result, fallback, paper.id, section_id)
     if event_emitter:
         for finding in findings:
             event_type = "experiment.missing" if finding.id.startswith("finding_missing") else "benchmark.suggested"
@@ -61,6 +82,29 @@ async def run_evaluation_agent(session, paper: Paper, section=None, event_emitte
             )
         event_emitter(session.session_id, "agent.finished", "Evaluation Agent suggested benchmarks.", agent="Evaluation", status="done")
     return findings
+
+
+def _parse_findings(result: dict, fallback: dict, paper_id: str, section_id: str) -> list[AgentFinding]:
+    raw_findings = result.get("findings")
+    if not isinstance(raw_findings, list):
+        raw_findings = fallback["findings"]
+    findings: list[AgentFinding] = []
+    for item in raw_findings[:4]:
+        if not isinstance(item, dict):
+            continue
+        severity = item.get("severity") if item.get("severity") in {"low", "medium", "high"} else "medium"
+        findings.append(
+            AgentFinding(
+                id=str(item.get("id") or new_id("finding")),
+                agent="Evaluation",
+                severity=severity,
+                title=str(item.get("title") or "Benchmark suggestion"),
+                body=str(item.get("body") or "Add a benchmark that better tests the paper's main claim."),
+                related_paper_id=str(item.get("related_paper_id") or paper_id),
+                related_section_id=str(item.get("related_section_id") or section_id),
+            )
+        )
+    return findings or [AgentFinding.model_validate(item) for item in fallback["findings"]]
 
 
 def _evaluation_section_id(paper: Paper) -> str:

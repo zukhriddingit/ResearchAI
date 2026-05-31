@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from dotenv import load_dotenv
 
 from app.agents.adversarial_agent import run_adversarial_agent
 from app.agents.code_agent import run_code_agent
@@ -22,9 +24,14 @@ from app.models import (
     LoadPaperRequest,
     Paper,
 )
-from app.services.weave_tracing import log_event, trace_agent_run
+from app.services.cloudinary_storage import upload_paper_asset
+from app.services.pdf_parser import extract_text_from_pdf_bytes
+from app.services.weave_tracing import log_event, trace_agent_run, traced_agent_call
 from app.store import store
 
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 app = FastAPI(title="DeepPaper API", version="0.1.0")
 
@@ -75,7 +82,11 @@ def events_stream(session_id: str):
 async def load_paper(session_id: str, request: LoadPaperRequest):
     session = _session_or_404(session_id)
     emit(session_id, "paper.loading", "Loading paper source.", agent="Parser", status="running", payload=request.model_dump())
-    paper = await run_parser_agent(session, request.source_type, request.source, emit)
+    paper = await traced_agent_call(
+        "Parser",
+        request.model_dump(),
+        lambda: run_parser_agent(session, request.source_type, request.source, emit),
+    )
     store.add_paper(session_id, paper)
 
     node = GraphNode(
@@ -102,6 +113,100 @@ async def load_paper(session_id: str, request: LoadPaperRequest):
     return {"paper": paper, "graph": session.graph, "events": session.events}
 
 
+@app.post("/api/sessions/{session_id}/papers/upload")
+async def upload_paper(session_id: str, file: UploadFile = File(...)):
+    session = _session_or_404(session_id)
+    filename = file.filename or "uploaded-paper"
+    content_type = file.content_type or "application/octet-stream"
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(file_bytes) > 35 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Uploaded file is larger than the 35 MB demo limit")
+
+    emit(
+        session_id,
+        "paper.loading",
+        f"Uploading and parsing {filename}.",
+        agent="Parser",
+        status="running",
+        payload={"filename": filename, "content_type": content_type, "bytes": len(file_bytes)},
+    )
+
+    paper_text = _extract_uploaded_text(file_bytes, filename, content_type)
+    if len(paper_text.strip()) < 80:
+        raise HTTPException(status_code=400, detail="Could not extract enough text from the uploaded paper")
+
+    cloudinary_asset = await upload_paper_asset(file_bytes, filename, content_type)
+    if cloudinary_asset and cloudinary_asset.get("secure_url"):
+        emit(
+            session_id,
+            "paper.stored",
+            "Original uploaded paper stored in Cloudinary.",
+            agent="Storage",
+            status="done",
+            payload=cloudinary_asset,
+        )
+    elif cloudinary_asset and cloudinary_asset.get("error"):
+        emit(
+            session_id,
+            "paper.storage_failed",
+            "Cloudinary storage failed, but local parsing will continue.",
+            agent="Storage",
+            status="failed",
+            payload={"error": cloudinary_asset.get("error"), "folder": cloudinary_asset.get("folder")},
+        )
+
+    paper = await traced_agent_call(
+        "Parser",
+        {"source_type": "upload", "filename": filename, "content_type": content_type, "bytes": len(file_bytes)},
+        lambda: run_parser_agent(session, "pdf_text", paper_text, emit),
+    )
+    if not paper.title.strip() or paper.title == "Untitled Uploaded Paper":
+        paper.title = _title_from_filename(filename)
+    if cloudinary_asset and cloudinary_asset.get("secure_url"):
+        paper.source_url = str(cloudinary_asset["secure_url"])
+    store.add_paper(session_id, paper)
+
+    node_metadata = {
+        "authors": paper.authors,
+        "year": paper.year,
+        "filename": filename,
+        "content_type": content_type,
+        "stored_in_cloudinary": bool(cloudinary_asset and cloudinary_asset.get("secure_url")),
+    }
+    if cloudinary_asset and cloudinary_asset.get("secure_url"):
+        node_metadata.update(
+            {
+                "cloudinary_public_id": cloudinary_asset.get("public_id"),
+                "cloudinary_url": cloudinary_asset.get("secure_url"),
+                "cloudinary_folder": cloudinary_asset.get("folder"),
+            }
+        )
+    node = GraphNode(
+        id=f"node_{paper.id}",
+        label=paper.title,
+        type="paper",
+        status="main",
+        paper_id=paper.id,
+        metadata=node_metadata,
+    )
+    store.add_node(session_id, node)
+    emit(
+        session_id,
+        "paper.parsed",
+        "Uploaded paper parsed into sections, citations, and claims.",
+        agent="Parser",
+        status="done",
+        payload={"paper_id": paper.id, "sections": len(paper.sections), "citations": len(paper.citations)},
+    )
+    emit(session_id, "node.update", "Uploaded paper node added to graph.", agent="Graph", status="done", payload=node.model_dump())
+    trace_agent_run("UploadParser", {"filename": filename, "content_type": content_type}, {"paper_id": paper.id, "stored": bool(cloudinary_asset)})
+
+    session = store.get_session(session_id)
+    return {"paper": paper, "graph": session.graph, "events": session.events, "cloudinary_asset": cloudinary_asset}
+
+
 @app.post("/api/sessions/{session_id}/citations/{citation_id}/click")
 async def click_citation(session_id: str, citation_id: str):
     session = _session_or_404(session_id)
@@ -110,7 +215,11 @@ async def click_citation(session_id: str, citation_id: str):
 
     emit(session_id, "citation.clicked", f"Citation {citation.raw} clicked.", agent="Reader", status="done", payload={"citation_id": citation.id})
     emit(session_id, "citation.resolving", "Reference Agent resolving citation in main-paper context.", agent="Reference", status="running")
-    reference_result = await run_reference_agent(session, main_paper, citation, emit)
+    reference_result = await traced_agent_call(
+        "Reference",
+        {"session_id": session_id, "main_paper_id": main_paper.id, "citation_id": citation.id},
+        lambda: run_reference_agent(session, main_paper, citation, emit),
+    )
     referenced_paper: Paper = reference_result["referenced_paper"]
     citation.resolved_paper_id = referenced_paper.id
     store.add_paper(session_id, main_paper)
@@ -148,13 +257,26 @@ async def click_citation(session_id: str, citation_id: str):
             payload={"citation_id": citation.id, "note": reference_result["summary"]["possible_contradiction"]},
         )
 
-    findings = await run_critique_agent(session, main_paper, main_paper.sections[1] if len(main_paper.sections) > 1 else None, main_paper, emit)
+    critique_section = main_paper.sections[1] if len(main_paper.sections) > 1 else None
+    findings = await traced_agent_call(
+        "Critique",
+        {"session_id": session_id, "paper_id": main_paper.id, "section_id": critique_section.id if critique_section else None},
+        lambda: run_critique_agent(session, main_paper, critique_section, main_paper, emit),
+    )
     for finding in findings:
         store.add_finding(session_id, finding)
 
-    code_result = await run_code_agent(session, main_paper, finding=findings[0] if findings else None, event_emitter=emit)
+    code_result = await traced_agent_call(
+        "Code",
+        {"session_id": session_id, "paper_id": main_paper.id, "finding_id": findings[0].id if findings else None},
+        lambda: run_code_agent(session, main_paper, finding=findings[0] if findings else None, event_emitter=emit),
+    )
     _add_repo_to_graph(session_id, main_paper, code_result["repo"])
-    replication_result = await run_replication_agent(session, main_paper, repo=code_result["repo"], finding=findings[0] if findings else None, event_emitter=emit)
+    replication_result = await traced_agent_call(
+        "Replication",
+        {"session_id": session_id, "paper_id": main_paper.id, "repo": code_result["repo"].get("full_name")},
+        lambda: run_replication_agent(session, main_paper, repo=code_result["repo"], finding=findings[0] if findings else None, event_emitter=emit),
+    )
     trace_agent_run("ReferenceClick", {"citation_id": citation_id}, {"paper_id": referenced_paper.id, "repo": code_result["repo"]["full_name"]})
 
     session = store.get_session(session_id)
@@ -186,24 +308,48 @@ async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
             emit(session_id, "agent.finished", "Parser endpoint hint returned.", agent="Parser", status="done", payload=output)
         elif normalized_agent == "reference":
             citation = _citation_or_404(paper, request.citation_id or (paper.citations[0].id if paper.citations else ""))
-            output = await run_reference_agent(session, paper, citation, emit)
+            output = await traced_agent_call(
+                "Reference",
+                {"session_id": session_id, "paper_id": paper.id, "citation_id": citation.id},
+                lambda: run_reference_agent(session, paper, citation, emit),
+            )
         elif normalized_agent == "critique":
-            findings = await run_critique_agent(session, paper, section, paper, emit)
+            findings = await traced_agent_call(
+                "Critique",
+                {"session_id": session_id, "paper_id": paper.id, "section_id": section.id if section else None},
+                lambda: run_critique_agent(session, paper, section, paper, emit),
+            )
             for finding in findings:
                 store.add_finding(session_id, finding)
             output = {"findings": [finding.model_dump() for finding in findings]}
         elif normalized_agent == "code":
-            output = await run_code_agent(session, paper, section=section, event_emitter=emit)
+            output = await traced_agent_call(
+                "Code",
+                {"session_id": session_id, "paper_id": paper.id, "section_id": section.id if section else None},
+                lambda: run_code_agent(session, paper, section=section, event_emitter=emit),
+            )
             _add_repo_to_graph(session_id, paper, output["repo"])
         elif normalized_agent == "replication":
-            output = await run_replication_agent(session, paper, event_emitter=emit)
+            output = await traced_agent_call(
+                "Replication",
+                {"session_id": session_id, "paper_id": paper.id},
+                lambda: run_replication_agent(session, paper, event_emitter=emit),
+            )
         elif normalized_agent == "evaluation":
-            findings = await run_evaluation_agent(session, paper, section=section, event_emitter=emit)
+            findings = await traced_agent_call(
+                "Evaluation",
+                {"session_id": session_id, "paper_id": paper.id, "section_id": section.id if section else None},
+                lambda: run_evaluation_agent(session, paper, section=section, event_emitter=emit),
+            )
             for finding in findings:
                 store.add_finding(session_id, finding)
             output = {"findings": [finding.model_dump() for finding in findings]}
         elif normalized_agent == "adversarial":
-            output = await run_adversarial_agent(session, paper, event_emitter=emit)
+            output = await traced_agent_call(
+                "Adversarial",
+                {"session_id": session_id, "paper_id": paper.id},
+                lambda: run_adversarial_agent(session, paper, event_emitter=emit),
+            )
         else:
             output = {"message": f"{agent_name} is not implemented yet. Deterministic stub completed."}
             emit(session_id, "agent.started", f"{agent_name} stub started.", agent=agent_name, status="running")
@@ -257,6 +403,23 @@ def _section_by_id(paper: Paper, section_id: str | None):
         if section.id == section_id:
             return section
     raise HTTPException(status_code=404, detail="Section not found")
+
+
+def _extract_uploaded_text(file_bytes: bytes, filename: str, content_type: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if content_type == "application/pdf" or suffix == ".pdf":
+        return extract_text_from_pdf_bytes(file_bytes)
+    if content_type.startswith("text/") or suffix in {".txt", ".md", ".markdown", ".tex"}:
+        try:
+            return file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return file_bytes.decode("latin-1", errors="ignore")
+    raise HTTPException(status_code=400, detail="Only PDF and plain text uploads are supported in this demo")
+
+
+def _title_from_filename(filename: str) -> str:
+    stem = Path(filename).stem.strip() or "Uploaded Paper"
+    return " ".join(stem.replace("_", " ").replace("-", " ").split()).title()
 
 
 def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any]) -> None:

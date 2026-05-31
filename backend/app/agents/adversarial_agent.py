@@ -3,6 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.models import Paper
+from app.services.llm import complete_json, reasoning_model
+
+
+ADVERSARIAL_PROMPT = """You are the Adversarial Agent for DeepPaper.
+Create stress tests that could falsify or weaken the main paper's strongest claims.
+Keep the tests concrete enough for a Code or Replication Agent to scaffold."""
 
 
 async def run_adversarial_agent(session, paper: Paper, repo=None, event_emitter=None) -> dict[str, Any]:
@@ -49,8 +55,32 @@ async def run_adversarial_agent(session, paper: Paper, repo=None, event_emitter=
             },
         ],
     }
+    result = await complete_json(
+        ADVERSARIAL_PROMPT,
+        (
+            f"Paper: {paper.title}\n"
+            f"Abstract: {paper.abstract or ''}\n"
+            f"Claims: {[claim.text for claim in paper.claims]}\n"
+            "Return JSON with attack_surface and tests. Each test needs name, claim_targeted, "
+            "procedure, expected_failure_mode, and severity low|medium|high."
+        ),
+        result,
+        model=reasoning_model(),
+        temperature=0.25,
+        max_tokens=900,
+    )
     if event_emitter:
-        for test in result["tests"]:
-            event_emitter(session.session_id, "attack.found", test["name"], agent="Adversarial", status=test["severity"], payload=test)
+        tests = result.get("tests") if isinstance(result.get("tests"), list) else []
+        for test in tests:
+            if not isinstance(test, dict):
+                continue
+            event_emitter(
+                session.session_id,
+                "attack.found",
+                str(test.get("name") or "Adversarial stress test"),
+                agent="Adversarial",
+                status=str(test.get("severity") or "medium"),
+                payload=test,
+            )
         event_emitter(session.session_id, "agent.finished", "Adversarial Agent proposed stress tests.", agent="Adversarial", status="done")
     return result
