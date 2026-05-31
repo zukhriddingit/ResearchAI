@@ -12,7 +12,7 @@ from app.models import Citation, EquationExtract, FigureExtract, PaperSection, T
 
 _MATH_UNICODES = set(
     "∀∁∂∃∄∅∆∇∈∉∊∋"
-    "∏∑−∓∗√∛∞∠∧∨∩"
+    "∏∑−∓√∛∞∠∧∨∩"    # ∗ removed — it's a footnote marker, not math
     "∪∫∬∭∴∵∼≈≠≡≤≥"
     "≪≫⊂⊃⊆⊇⊢⊨⋅⋈⌈⌉"
     "⌊⌋⌠⌡⎛⎜⎝⎞⎟⎠"
@@ -20,6 +20,22 @@ _MATH_UNICODES = set(
     "νξοπρςστυφχψ"
     "ωΑΒΓΔΕΖΗΘΙΚΛ"
     "ΜΝΞΟΠΡΣΤΥΦΧΨΩ"
+)
+
+# Strong operators: their presence almost guarantees an equation
+_MATH_OPERATORS = frozenset(
+    "∑∫∂∇∆∏∝√∞⊗⊕"
+    "≤≥≠≈≡⊂⊃⊆⊇∈∉∀∃"
+)
+
+# Footnote / superscript markers that are NOT math
+_FOOTNOTE_MARKERS = frozenset("∗†‡§¶")
+
+# "FirstName LastName∗" — author bylines, affiliations, email footnotes
+_NAME_LINE_RE = re.compile(
+    r'^[A-ZÀ-Ö][a-zA-ZÀ-ÿ\-]+'  # starts with capitalised word
+    r'(?:\s+(?:[A-ZÀ-Ö][a-zA-ZÀ-ÿ\-]+|[A-Z]\.)){0,5}'  # up to 5 more name-parts
+    r'[∗†‡§¶\d,\s]*$'             # ends with optional footnote markers / numbers
 )
 
 _MATH_FONT_NAMES = ("cmmi", "cmmib", "cmr", "cmsy", "cmex", "msam", "msbm", "symbol", "zapf")
@@ -167,12 +183,8 @@ def extract_structured_document(pdf_bytes: bytes) -> tuple[list[PaperSection], l
             and not span["math"]
         )
 
-        # Equation detection
-        is_equation = (
-            span["math"]
-            or bool(_EQ_LABEL_RE.search(text))
-            or (len(text) < 200 and sum(1 for c in text if c in _MATH_UNICODES) >= 2)
-        )
+        # Equation detection — use strict gate to avoid author names / headers
+        is_equation = _is_real_equation(text, span["math"])
 
         if is_heading and _looks_like_section_header(text):
             _flush(current_title, current_type, current_level, current_lines)
@@ -218,6 +230,64 @@ def extract_structured_document(pdf_bytes: bytes) -> tuple[list[PaperSection], l
                                  text="\n".join(s["text"] for s in all_spans)[:10000])]
 
     return sections, equations
+
+
+def _is_real_equation(text: str, math_font: bool) -> bool:
+    """
+    Return True only if this line is very likely a mathematical equation.
+
+    Rejection rules (in order):
+      1. Too short to be meaningful
+      2. Looks like a person name / affiliation (e.g. "Ashish Vaswani∗")
+      3. Looks like an email, URL, or institution line
+    Acceptance rules:
+      A. Has an explicit equation label: (1), (2.3) …
+      B. Has a math-specific font (CMMI, Symbol …) AND is not a heading/name
+      C. Has ≥2 strong math operators (∑ ∫ ≤ ≠ ∈ …)
+      D. Has "=" plus at least one real math symbol
+    """
+    stripped = text.strip()
+    if len(stripped) < 4:
+        return False
+
+    # ── Rejection rules ───────────────────────────────────────────────────
+    # Author byline / affiliation
+    if _NAME_LINE_RE.match(stripped) and len(stripped) < 80:
+        return False
+    # Email address
+    if "@" in stripped and " " not in stripped.split("@")[0][-8:]:
+        return False
+    # URL
+    if stripped.startswith(("http://", "https://", "www.")):
+        return False
+    # Pure footnote text (†Equal contribution. ∗Corresponding author.)
+    if stripped and stripped[0] in _FOOTNOTE_MARKERS and len(stripped) < 120:
+        alnum_ratio = sum(c.isalpha() for c in stripped) / len(stripped)
+        if alnum_ratio > 0.6:
+            return False
+
+    # ── Acceptance rules ──────────────────────────────────────────────────
+    # A: numbered equation label
+    if _EQ_LABEL_RE.search(stripped):
+        return True
+
+    # B: math font — reliable, but guard against names rendered in italic fonts
+    if math_font and not _NAME_LINE_RE.match(stripped):
+        return True
+
+    # Count only "real" math chars (exclude footnote markers)
+    real_math = [ch for ch in stripped if ch in _MATH_UNICODES and ch not in _FOOTNOTE_MARKERS]
+
+    # C: ≥2 strong operators
+    strong_ops = [ch for ch in real_math if ch in _MATH_OPERATORS]
+    if len(strong_ops) >= 2:
+        return True
+
+    # D: "=" sign plus at least one math symbol
+    if "=" in stripped and real_math:
+        return True
+
+    return False
 
 
 def _looks_like_section_header(text: str) -> bool:

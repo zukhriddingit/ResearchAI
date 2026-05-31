@@ -1,28 +1,91 @@
 from __future__ import annotations
 
+import re
+
 from app.models import AgentFinding, AgentTrigger, EquationExtract, Paper, new_id
 from app.services.llm import complete_json
 from app.services.weave_tracing import op as weave_op
+
+# ---------------------------------------------------------------------------
+# Equation quality filter (mirrors the stricter detector in pdf_parser.py)
+# ---------------------------------------------------------------------------
+
+_FOOTNOTE_MARKERS = frozenset("∗†‡§¶")
+
+# Chars that are reliably mathematical (operators, integrals, etc.)
+_STRONG_MATH = frozenset(
+    "∑∫∂∇∆∏∝√∞⊗⊕"
+    "≤≥≠≈≡⊂⊃⊆⊇∈∉∀∃"
+    "αβγδεζηθικλμνξπρστυφχψω"   # lowercase Greek (common in equations)
+)
+
+_NAME_LINE_RE = re.compile(
+    r'^[A-ZÀ-Ö][a-zA-ZÀ-ÿ\-]+'
+    r'(?:\s+(?:[A-ZÀ-Ö][a-zA-ZÀ-ÿ\-]+|[A-Z]\.)){0,5}'
+    r'[∗†‡§¶\d,\s]*$'
+)
+
+
+def _filter_real_equations(equations: list[EquationExtract]) -> list[EquationExtract]:
+    """
+    Remove false positives before they reach the LLM:
+      - Author names / affiliations:  "Ashish Vaswani∗"
+      - Footnote sentences:           "∗Equal contribution."
+      - Too-short fragments:          "n", "d"
+      - Lines with no actual math content (only alphabetic + footnote markers)
+    """
+    kept: list[EquationExtract] = []
+    for eq in equations:
+        raw = (eq.latex or eq.raw).strip()
+
+        # Too short to be meaningful
+        if len(raw) < 5:
+            continue
+
+        # Author / name line pattern
+        if _NAME_LINE_RE.match(raw) and len(raw) < 80:
+            continue
+
+        # Footnote sentence starting with a marker
+        if raw and raw[0] in _FOOTNOTE_MARKERS:
+            alnum = sum(c.isalpha() for c in raw)
+            if alnum / len(raw) > 0.55:
+                continue
+
+        # Must contain at least one strong math char, an "=" sign, or be LaTeX source
+        has_strong = any(ch in _STRONG_MATH for ch in raw if ch not in _FOOTNOTE_MARKERS)
+        has_equals = "=" in raw
+        has_latex  = "\\" in raw  # LaTeX commands like \frac, \sum
+        has_label  = bool(re.search(r"\(\s*\d+(?:\.\d+)?\s*\)\s*$", raw))
+
+        if has_strong or has_equals or has_latex or has_label:
+            kept.append(eq)
+
+    return kept
 
 
 MATH_EXPLAIN_PROMPT = """\
 You are a mathematical notation expert for research papers.
 
-Given an equation from a research paper, explain it in plain English with full context.
+Given a mathematical equation from a research paper, explain it in plain English.
 
-Return JSON:
+IMPORTANT: If the input does not appear to be a mathematical equation (e.g. it is a person's name, an institution, a URL, or a sentence), return:
+{"skip": true, "reason": "not an equation"}
+
+Otherwise return:
 {
-  "name": "Short name for this equation (e.g. 'Low-Rank Update Rule', 'Loss Function')",
+  "skip": false,
+  "name": "Short descriptive name (e.g. 'Scaled Dot-Product Attention', 'Cross-Entropy Loss')",
   "plain_english": "What this equation computes or represents in 1-2 sentences.",
   "variables": [
-    {"symbol": "W", "meaning": "weight matrix being updated"}
+    {"symbol": "W", "meaning": "the weight matrix being adapted"}
   ],
-  "role_in_paper": "How this equation relates to the paper's core contribution.",
-  "related_concepts": ["linear algebra", "gradient descent"],
-  "correctness_notes": "Any assumptions, edge cases, or potential issues with this formulation."
+  "role_in_paper": "How this equation relates to the paper's core contribution (1-2 sentences).",
+  "related_concepts": ["attention mechanism", "softmax"],
+  "correctness_notes": "Any assumptions, edge cases, dimension constraints, or potential issues."
 }
 
-Be precise. If you cannot determine the meaning from context, say so explicitly."""
+Be precise and specific. Reference the actual symbols you see."""
 
 MATH_AUDIT_PROMPT = """\
 You are a mathematical peer reviewer for research papers.
@@ -96,6 +159,16 @@ async def run_math_agent(
                           "Math Agent: no equations found in this paper.",
                           agent="Math", status="done")
         return {"explanations": [], "audit": {"issues": [], "overall_assessment": "No equations found."}, "triggers": []}
+
+    # ── Filter out non-equations before hitting the LLM ──────────────────
+    target_equations = _filter_real_equations(target_equations)
+
+    if not target_equations:
+        if event_emitter:
+            event_emitter(session.session_id, "agent.finished",
+                          "Math Agent: equations found but none passed quality filter.",
+                          agent="Math", status="done")
+        return {"explanations": [], "audit": {"issues": [], "overall_assessment": "No mathematical equations detected after filtering."}, "triggers": []}
 
     if event_emitter:
         event_emitter(session.session_id, "math.equations_found",
@@ -172,13 +245,14 @@ async def _explain_equations_batched(paper: Paper, equations: list[EquationExtra
         batch = equations[i : i + BATCH]
         tasks = [_explain_single(paper, eq) for eq in batch]
         results = await asyncio.gather(*tasks)
-        all_results.extend(results)
+        all_results.extend(r for r in results if r is not None)  # drop skipped
 
     return all_results
 
 
 @weave_op
-async def _explain_single(paper: Paper, eq: EquationExtract) -> dict:
+async def _explain_single(paper: Paper, eq: EquationExtract) -> dict | None:
+    """Returns None if the LLM or pre-filter decides this is not a real equation."""
     label_str = f"Equation {eq.label}" if eq.label else "Unlabelled equation"
     latex_str = f"LaTeX: `{eq.latex}`\n" if eq.latex else ""
     user_msg = (
@@ -190,21 +264,32 @@ async def _explain_single(paper: Paper, eq: EquationExtract) -> dict:
         f"Context after:  {eq.context_after}\n"
     )
     fallback = {
+        "skip": False,
         "name": label_str,
-        "plain_english": f"Mathematical expression: {eq.raw[:200]}",
+        "plain_english": f"Mathematical expression from {paper.title}.",
         "variables": [],
         "role_in_paper": "Part of the paper's mathematical formulation.",
         "related_concepts": [],
-        "correctness_notes": "Could not determine automatically.",
+        "correctness_notes": "",
     }
     result = await complete_json(MATH_EXPLAIN_PROMPT, user_msg, fallback)
+
+    # LLM said this isn't an equation
+    if result.get("skip"):
+        return None
+
     return {
         "eq_id": eq.id,
         "label": eq.label,
         "raw": eq.raw,
         "latex": eq.latex,
         "section_id": eq.section_id,
-        **result,
+        "name": result.get("name", label_str),
+        "plain_english": result.get("plain_english", ""),
+        "variables": result.get("variables", []),
+        "role_in_paper": result.get("role_in_paper", ""),
+        "related_concepts": result.get("related_concepts", []),
+        "correctness_notes": result.get("correctness_notes", ""),
     }
 
 
