@@ -16,22 +16,34 @@ def new_id(prefix: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Visual extraction models (figures, tables from PDF)
+# Visual / equation extraction models
 # ---------------------------------------------------------------------------
 
 class FigureExtract(BaseModel):
     """A figure cropped from a PDF page, base64-encoded."""
     caption: str | None = None
-    image_b64: str = ""        # base64 PNG — may be empty if PDF unavailable
+    image_b64: str = ""
     page: int = 0
     section_id: str | None = None
+    vision_description: str | None = None   # vision-LLM reading of the figure
 
 
 class TableExtract(BaseModel):
     """A table extracted from a PDF page as structured rows."""
     caption: str | None = None
     rows: list[list[str]] = Field(default_factory=list)
-    image_b64: str = ""        # raw crop of the table for vision critique
+    image_b64: str = ""
+    section_id: str | None = None
+
+
+class EquationExtract(BaseModel):
+    """A mathematical equation extracted from the paper."""
+    id: str = Field(default_factory=lambda: new_id("eq"))
+    raw: str                      # text approximation (unicode chars, ASCII math)
+    latex: str = ""               # LaTeX source when available (from arxiv source)
+    label: str = ""               # equation number, e.g. "(1)" or "(2.3)"
+    context_before: str = ""      # sentence(s) immediately preceding the equation
+    context_after: str = ""       # sentence(s) immediately following
     section_id: str | None = None
 
 
@@ -40,13 +52,6 @@ class TableExtract(BaseModel):
 # ---------------------------------------------------------------------------
 
 class AgentTrigger(BaseModel):
-    """
-    A structured trigger emitted by one agent to kick off another.
-
-    `target`  — the agent to invoke next (lowercase name)
-    `reason`  — why it was triggered (e.g. "contradiction_detected")
-    `context` — arbitrary data the target agent needs
-    """
     target: str
     reason: str
     context: dict[str, Any] = Field(default_factory=dict)
@@ -61,10 +66,12 @@ class PaperSection(BaseModel):
     title: str
     type: str
     text: str
+    level: int = 1                # heading depth: 1 = top-level, 2 = subsection, etc.
     start_offset: int | None = None
     end_offset: int | None = None
     figures: list[FigureExtract] = Field(default_factory=list)
     tables: list[TableExtract] = Field(default_factory=list)
+    equations: list[EquationExtract] = Field(default_factory=list)
 
 
 class Citation(BaseModel):
@@ -73,6 +80,8 @@ class Citation(BaseModel):
     title: str | None = None
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
+    doi: str | None = None        # e.g. "10.18653/v1/2022.acl-long.220"
+    url: str | None = None        # best available URL (doi.org, arxiv, S2)
     semantic_scholar_id: str | None = None
     arxiv_id: str | None = None
     context_snippet: str | None = None
@@ -99,7 +108,30 @@ class Paper(BaseModel):
     sections: list[PaperSection] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     claims: list[Claim] = Field(default_factory=list)
+    equations: list[EquationExtract] = Field(default_factory=list)  # global equation list
     is_main: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Code change models
+# ---------------------------------------------------------------------------
+
+class CodeEdit(BaseModel):
+    """A concrete suggested code change produced by code/math/critique agents."""
+    file_path: str
+    change_type: Literal["add", "modify", "delete"] = "modify"
+    description: str
+    original_snippet: str = ""
+    new_snippet: str = ""
+    rationale: str = ""
+
+
+class CodeChangeRequest(BaseModel):
+    """A user-initiated or agent-triggered change request against the paper's code."""
+    paper_id: str | None = None
+    user_message: str = ""           # free-form user instruction
+    finding_ids: list[str] = Field(default_factory=list)  # apply specific findings
+    target_files: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
