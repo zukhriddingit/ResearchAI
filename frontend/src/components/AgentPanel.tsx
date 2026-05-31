@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   ArrowLeft,
@@ -12,7 +13,6 @@ import {
   ExternalLink,
   FlaskConical,
   GitBranch,
-  GitPullRequest,
   Loader2,
   SearchCode,
   ShieldAlert
@@ -24,7 +24,7 @@ import FindingCard from "./FindingCard";
 interface Props {
   events: AgentEvent[];
   findings: AgentFinding[];
-  activeAgent: string | null;
+  activeAgents: string[];
   disabled: boolean;
   onRunAgent: (agentName: string) => void;
   onGenerateCode: () => void;
@@ -33,7 +33,7 @@ interface Props {
 type AssistantAction = {
   agent: string;
   label: string;
-  icon: typeof GitPullRequest;
+  icon: LucideIcon;
   detail: string;
   tone: string;
 };
@@ -49,7 +49,6 @@ type WorkProduct = {
 };
 
 const assistantActions: AssistantAction[] = [
-  { agent: "reference", label: "Explain citations", icon: GitPullRequest, detail: "Connect the first citation to this paper", tone: "reference" },
   { agent: "critique", label: "Review claims", icon: ShieldAlert, detail: "Surface weak baselines and missing checks", tone: "critique" },
   { agent: "code", label: "Find implementation", icon: SearchCode, detail: "Look for code that matches the paper", tone: "code" },
   { agent: "math", label: "Explain math", icon: Calculator, detail: "Explain equations and audit notation", tone: "math" },
@@ -58,10 +57,10 @@ const assistantActions: AssistantAction[] = [
   { agent: "graph", label: "Refresh map", icon: GitBranch, detail: "Sync the research map", tone: "graph" }
 ];
 
-function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent, onGenerateCode }: Props) {
+function AgentPanel({ events, findings, activeAgents, disabled, onRunAgent, onGenerateCode }: Props) {
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const latest = [...events].reverse();
-  const active = assistantActions.find((action) => action.agent === activeAgent);
+  const runningActions = assistantActions.filter((action) => activeAgents.includes(action.agent));
   const selectedAction = selectedTask ? assistantActions.find((action) => action.agent === selectedTask) : null;
   const recentActivity = latest.map(toActivity).filter((event): event is AgentEvent => event !== null).slice(0, 4);
   const products = buildWorkProducts(events).slice(0, 4);
@@ -71,7 +70,7 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent, onGen
     return (
       <TaskDetailPanel
         action={selectedAction}
-        activeAgent={activeAgent}
+        activeAgents={activeAgents}
         disabled={disabled}
         events={events}
         findings={findings}
@@ -88,23 +87,26 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent, onGen
         <Brain size={16} />
         <span>Research Assistants</span>
       </div>
-      <div className={`agent-runner ${active ? "is-running" : ""}`}>
-        <strong>{active ? active.label : latest[0] ? "Paper workspace ready" : "No paper loaded"}</strong>
-        <span>{active ? active.detail : latest[0] ? humanizeEvent(latest[0]) : "Load an arXiv link or upload a paper."}</span>
+      <div className={`agent-runner ${runningActions.length > 0 ? "is-running" : ""}`}>
+        <strong>{runningActions.length > 0 ? runningTitle(runningActions) : latest[0] ? "Paper workspace ready" : "No paper loaded"}</strong>
+        <span>
+          {runningActions.length > 0
+            ? "Assistants are working in parallel. You can keep reading or open another task."
+            : latest[0]
+              ? humanizeEvent(latest[0])
+              : "Load an arXiv link or upload a paper."}
+        </span>
       </div>
       <div className="agent-grid">
         {assistantActions.map(({ agent, label, icon: Icon, tone }) => {
-          const isActive = activeAgent === agent;
+          const isActive = activeAgents.includes(agent);
           const status = isActive ? "running" : inferStatus(agent, latest);
           return (
             <button
               key={agent}
               className={`agent-card action-${tone} status-${status}`}
               disabled={disabled}
-              onClick={() => {
-                setSelectedTask(agent);
-                onRunAgent(agent);
-              }}
+              onClick={() => setSelectedTask(agent)}
             >
               <Icon size={16} />
               <span className="agent-name">{label}</span>
@@ -119,7 +121,7 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent, onGen
           );
         })}
       </div>
-      {active && <GenerationRow action={active} />}
+      {runningActions.map((action) => <GenerationRow key={action.agent} action={action} />)}
       <div className="feed-section">
         <h3>Results</h3>
         <div className="result-list">
@@ -191,7 +193,7 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent, onGen
 
 function TaskDetailPanel({
   action,
-  activeAgent,
+  activeAgents,
   disabled,
   events,
   findings,
@@ -200,7 +202,7 @@ function TaskDetailPanel({
   onGenerateCode
 }: {
   action: AssistantAction;
-  activeAgent: string | null;
+  activeAgents: string[];
   disabled: boolean;
   events: AgentEvent[];
   findings: AgentFinding[];
@@ -210,7 +212,8 @@ function TaskDetailPanel({
 }) {
   const latest = [...events].reverse();
   const Icon = action.icon;
-  const status = activeAgent === action.agent ? "running" : inferStatus(action.agent, latest);
+  const isRunning = activeAgents.includes(action.agent);
+  const status = isRunning ? "running" : inferStatus(action.agent, latest);
   const agentEvents = latest.filter((event) => eventBelongsToAgent(event, action.agent)).slice(0, 8);
   const products = buildWorkProducts(events).filter((product) => product.agent === action.agent).slice(0, 6);
   const relatedFindings = findings.filter((finding) => finding.agent.toLowerCase().includes(action.agent)).slice(-4).reverse();
@@ -232,7 +235,7 @@ function TaskDetailPanel({
           <h2>{action.label}</h2>
           <p>{action.detail}</p>
         </div>
-        <button className="task-run-button" type="button" disabled={disabled} onClick={() => onRunAgent(action.agent)}>
+        <button className="task-run-button" type="button" disabled={disabled || isRunning} onClick={() => onRunAgent(action.agent)}>
           {status === "running" ? <Loader2 className="spin" size={15} /> : <ChevronRight size={15} />}
           {status === "running" ? "Generating" : "Run"}
         </button>
@@ -263,6 +266,9 @@ function TaskDetailPanel({
             </div>
           ))}
         </DetailSection>
+        <DetailSection title="Insights" empty="No saved insights from this assistant yet.">
+          {relatedFindings.map((finding) => <FindingCard key={finding.id} finding={finding} />)}
+        </DetailSection>
         <DetailSection title="Activity" empty="No activity for this assistant yet.">
           {agentEvents.map((event) => (
             <div className="detail-activity-row" key={event.id}>
@@ -273,9 +279,6 @@ function TaskDetailPanel({
               </div>
             </div>
           ))}
-        </DetailSection>
-        <DetailSection title="Insights" empty="No saved insights from this assistant yet.">
-          {relatedFindings.map((finding) => <FindingCard key={finding.id} finding={finding} />)}
         </DetailSection>
       </div>
     </div>
@@ -335,6 +338,11 @@ function statusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+function runningTitle(actions: AssistantAction[]) {
+  if (actions.length === 1) return `Generating ${actions[0].label}`;
+  return `${actions.length} assistants running`;
+}
+
 function eventBelongsToAgent(event: AgentEvent, agent: string) {
   const eventAgent = event.agent?.toLowerCase() ?? "";
   if (eventAgent.includes(agent)) return true;
@@ -343,7 +351,7 @@ function eventBelongsToAgent(event: AgentEvent, agent: string) {
     reference: ["citation.resolving", "citation.resolved"],
     critique: ["critique.finding", "experiment.missing"],
     code: ["repo.ready", "code.generation_available", "codegen.started", "codegen.progress", "codegen.done"],
-    math: ["math.issue"],
+    math: ["math.explained", "math.no_equations", "math.issue"],
     replication: ["replication.queued"],
     evaluation: ["evaluation.plan", "benchmark.suggested", "experiment.missing"],
     graph: ["node.update", "edge.update"]
@@ -421,6 +429,27 @@ function buildWorkProducts(events: AgentEvent[]) {
         body: String(payload.description || event.message)
       });
     }
+    if (event.type === "math.explained") {
+      const explanations = Array.isArray(payload.explanations) ? payload.explanations : [];
+      const first = explanations.find((item) => typeof item === "object" && item !== null) as
+        | { name?: string; plain_english?: string; role_in_paper?: string }
+        | undefined;
+      products.push({
+        id: event.id,
+        agent: "math",
+        title: first?.name || "Equation explanations",
+        body: first?.plain_english || first?.role_in_paper || event.message,
+        badge: `${explanations.length} equation${explanations.length === 1 ? "" : "s"}`
+      });
+    }
+    if (event.type === "math.no_equations") {
+      products.push({
+        id: event.id,
+        agent: "math",
+        title: "No equations found",
+        body: String(payload.reason || event.message)
+      });
+    }
     if (event.type === "paper.stored") {
       products.push({
         id: event.id,
@@ -437,10 +466,6 @@ function buildWorkProducts(events: AgentEvent[]) {
         title: "Paper parsed locally",
         body: "Original-file storage was skipped, but the paper is ready to read."
       });
-    }
-    if (event.type === "benchmark.suggested") {
-      const finding = payload as { title?: string; body?: string; severity?: string };
-      products.push({ id: event.id, agent: "evaluation", title: finding.title || "Benchmark suggestion", body: finding.body || event.message, badge: finding.severity });
     }
     if (event.type === "evaluation.plan") {
       const eventFindings = Array.isArray(payload.findings) ? payload.findings : [];
@@ -470,6 +495,7 @@ function humanizeEvent(event: AgentEvent) {
     "session.created": "Session ready.",
     "paper.loading": "Reading paper.",
     "paper.parsed": "Paper parsed into sections and citations.",
+    "paper.vision": "Figures are being interpreted.",
     "paper.stored": "Original paper stored.",
     "paper.storage_failed": "Paper parsed locally.",
     "citation.resolving": "Checking citation context.",
@@ -481,6 +507,8 @@ function humanizeEvent(event: AgentEvent) {
     "codegen.started": "Generating code project.",
     "codegen.progress": event.message,
     "codegen.done": "Generated code ZIP ready.",
+    "math.explained": "Equation explanations ready.",
+    "math.no_equations": "No equations found.",
     "math.issue": "Math issue added.",
     "replication.queued": "Replication plan ready.",
     "evaluation.plan": "Evaluation plan ready.",

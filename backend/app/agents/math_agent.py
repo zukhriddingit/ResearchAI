@@ -22,6 +22,14 @@ async def run_math_agent(session, paper: Paper, section=None, event_emitter=None
     equations = _target_equations(paper, section)
     if not equations:
         if event_emitter:
+            event_emitter(
+                session.session_id,
+                "math.no_equations",
+                "No equations were found in the selected paper or section.",
+                agent="Math",
+                status="done",
+                payload={"reason": "No extracted equations are available for this target."},
+            )
             event_emitter(session.session_id, "agent.finished", "Math Agent found no equations to analyze.", agent="Math", status="done")
         return {"explanations": [], "audit": {"issues": [], "overall_assessment": "No equations found."}, "triggers": []}
 
@@ -43,6 +51,14 @@ async def run_math_agent(session, paper: Paper, section=None, event_emitter=None
                     status=str(issue.get("severity") or "medium"),
                     payload=issue,
                 )
+        event_emitter(
+            session.session_id,
+            "math.explained",
+            f"Math Agent explained {len(explanations)} equation(s).",
+            agent="Math",
+            status="done",
+            payload={"explanations": explanations, "audit": audit},
+        )
         event_emitter(
             session.session_id,
             "agent.finished",

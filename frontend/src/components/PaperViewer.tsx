@@ -1,7 +1,7 @@
 import { Bot, ChevronDown, ChevronUp, ExternalLink, FileSearch, FlaskConical, SearchCode } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { Citation, Paper, PaperSection } from "../types";
+import type { Citation, EquationExtract, FigureExtract, Paper, PaperSection, TableExtract } from "../types";
 
 interface Props {
   paper: Paper | null;
@@ -125,6 +125,7 @@ function SectionBlock({ section, citations, busy, activeCitationId, onCitationCl
         )}
       </div>
       <div className="section-text">{renderTextWithCitations(text, citations, busy, activeCitationId, onCitationClick)}</div>
+      <SectionVisuals section={section} />
       {section.text.length > 1200 && (
         <button className="text-button" onClick={() => setExpanded((value) => !value)}>
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -148,6 +149,70 @@ function SectionBlock({ section, citations, busy, activeCitationId, onCitationCl
         </div>
       )}
     </article>
+  );
+}
+
+function SectionVisuals({ section }: { section: PaperSection }) {
+  const figures = section.figures ?? [];
+  const tables = section.tables ?? [];
+  const equations = section.equations ?? [];
+  if (figures.length === 0 && tables.length === 0 && equations.length === 0) return null;
+
+  return (
+    <div className="section-visuals">
+      {figures.slice(0, 4).map((figure, index) => <FigureCard key={`${figure.page}-${index}`} figure={figure} />)}
+      {tables.slice(0, 3).map((table, index) => <TableCard key={`${table.caption ?? "table"}-${index}`} table={table} />)}
+      {equations.slice(0, 4).map((equation) => <EquationCard key={equation.id} equation={equation} />)}
+    </div>
+  );
+}
+
+function FigureCard({ figure }: { figure: FigureExtract }) {
+  return (
+    <figure className="paper-visual-card paper-figure-card">
+      {figure.image_b64 && <img className="paper-figure" src={`data:image/png;base64,${figure.image_b64}`} alt={figure.caption ?? "Extracted research paper figure"} />}
+      <figcaption>
+        {figure.caption && <strong>{figure.caption}</strong>}
+        {figure.vision_description && <span>{figure.vision_description}</span>}
+      </figcaption>
+    </figure>
+  );
+}
+
+function TableCard({ table }: { table: TableExtract }) {
+  const rows = table.rows ?? [];
+  const previewRows = rows.slice(0, 8);
+  const columnCount = Math.min(Math.max(...previewRows.map((row) => row.length), 0), 6);
+  return (
+    <div className="paper-visual-card paper-table-card">
+      {table.caption && <strong>{table.caption}</strong>}
+      {previewRows.length > 0 ? (
+        <div className="table-scroll">
+          <table>
+            <tbody>
+              {previewRows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.slice(0, columnCount).map((cell, cellIndex) => (
+                    <td key={cellIndex}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : table.image_b64 ? (
+        <img className="paper-figure" src={`data:image/png;base64,${table.image_b64}`} alt={table.caption ?? "Extracted research paper table"} />
+      ) : null}
+    </div>
+  );
+}
+
+function EquationCard({ equation }: { equation: EquationExtract }) {
+  return (
+    <div className="paper-visual-card paper-equation-card">
+      <strong>{equation.label ? `Equation ${equation.label}` : "Equation"}</strong>
+      <code>{equation.latex || equation.raw}</code>
+    </div>
   );
 }
 

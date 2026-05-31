@@ -8,7 +8,7 @@ os.environ["SEMANTIC_SCHOLAR_API_KEY"] = ""
 
 from app.main import app
 from app.services import weave_tracing
-from app.services.pdf_parser import split_into_sections
+from app.services.pdf_parser import extract_equations_from_text, split_into_sections
 
 
 client = TestClient(app)
@@ -92,6 +92,7 @@ def test_uploaded_paper_agent_flow():
         json={"paper_id": paper_id, "mode": "manual"},
     ).json()
     assert math["output"]["explanations"]
+    assert any(event["type"] == "math.explained" for event in math["events"])
 
     code_change = client.post(
         f"/api/sessions/{session_id}/code/change",
@@ -147,6 +148,26 @@ def test_numbered_sections_ignore_table_method_headers():
     assert "Introduction" in titles
     assert "COCO Object Detection" in titles
     assert titles.count("Method") == 0
+
+
+def test_equation_extraction_ignores_title_and_author_fragments():
+    text = (
+        "Features as Rewards: Scalable Supervision\n"
+        "for Open-Ended Tasks via Interpretability\n"
+        "Aaditya Vikram Prasad * 1 Connor Watts * 1 Jack Merullo 1 Dhruvil Gala 1 Owen Lewis 1\n\n"
+        "Abstract\n"
+        "This paper studies scalable supervision.\n\n"
+        "Method\n"
+        "The training objective is L = x + y (1).\n"
+        "We update the hidden state with h = W_0 x + BA x.\n"
+    )
+    sections = split_into_sections(text)
+    equations = extract_equations_from_text(text, sections)
+    raw_equations = [equation.raw for equation in equations]
+
+    assert not any("Open-Ended Tasks via Interpretability" in equation for equation in raw_equations)
+    assert not any("Aaditya Vikram Prasad" in equation for equation in raw_equations)
+    assert any("L = x + y" in equation for equation in raw_equations)
 
 
 def test_weave_noop_without_env(monkeypatch):

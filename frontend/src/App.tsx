@@ -22,7 +22,7 @@ function App() {
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [readingHistory, setReadingHistory] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [activeAgents, setActiveAgents] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [columns, setColumns] = useState({ left: 20, right: 30 });
@@ -154,9 +154,17 @@ function App() {
     });
   }, []);
 
+  const startAgent = useCallback((agent: string) => {
+    setActiveAgents((current) => (current.includes(agent) ? current : [...current, agent]));
+  }, []);
+
+  const finishAgent = useCallback((agent: string) => {
+    setActiveAgents((current) => current.filter((item) => item !== agent));
+  }, []);
+
   const handleLoad = async (sourceType: "arxiv_url" | "pdf_text", source: string) => {
     setBusy(true);
-    setActiveAgent("parser");
+    startAgent("parser");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation(null);
@@ -168,13 +176,13 @@ function App() {
       setError(err instanceof Error ? err.message : "Failed to load paper");
     } finally {
       setBusy(false);
-      setActiveAgent(null);
+      finishAgent("parser");
     }
   };
 
   const handleUpload = async (file: File) => {
     setBusy(true);
-    setActiveAgent("parser");
+    startAgent("parser");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation(null);
@@ -186,7 +194,7 @@ function App() {
       setError(err instanceof Error ? err.message : "Failed to upload paper");
     } finally {
       setBusy(false);
-      setActiveAgent(null);
+      finishAgent("parser");
     }
   };
 
@@ -194,8 +202,7 @@ function App() {
     const sourcePaper = activePaper ?? mainPaper;
     if (!sessionId || !sourcePaper) return;
     const citation = sourcePaper.citations.find((item) => item.id === citationId);
-    setBusy(true);
-    setActiveAgent("reference");
+    startAgent("reference");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation({ id: citationId, label: citation?.title ?? citation?.raw ?? "citation" });
@@ -208,8 +215,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resolve citation");
     } finally {
-      setBusy(false);
-      setActiveAgent(null);
+      finishAgent("reference");
       setPendingCitation(null);
     }
   };
@@ -218,24 +224,15 @@ function App() {
     if (!sessionId || !mainPaper) return;
     const targetPaper = activePaper ?? mainPaper;
     const normalizedAgent = agentName.toLowerCase();
-    if (normalizedAgent === "reference") {
-      const citation = mainPaper.citations.find((item) => !item.resolved_paper_id) ?? mainPaper.citations[0];
-      if (!citation) {
-        setError("No citation is available for the Reference Agent yet.");
-        return;
-      }
-      await handleCitationClick(citation.id);
-      return;
-    }
+    if (activeAgents.includes(normalizedAgent)) return;
     if (agentName === "graph") {
-      setActiveAgent("graph");
+      startAgent("graph");
       appendLocalEvent("Graph", "Refreshing graph state from the session.");
       await refreshSession();
-      window.setTimeout(() => setActiveAgent(null), 400);
+      window.setTimeout(() => finishAgent("graph"), 400);
       return;
     }
-    setBusy(true);
-    setActiveAgent(normalizedAgent);
+    startAgent(normalizedAgent);
     setError(null);
     appendLocalEvent(titleCase(normalizedAgent), agentActionMessage(normalizedAgent));
     try {
@@ -244,8 +241,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to run ${agentName}`);
     } finally {
-      setBusy(false);
-      setActiveAgent(null);
+      finishAgent(normalizedAgent);
     }
   };
 
@@ -253,7 +249,7 @@ function App() {
     if (!sessionId) return;
     const trail = uniqueIds([paperId, activePaper?.id, mainPaper?.id, ...readingHistory]);
     setBusy(true);
-    setActiveAgent("parser");
+    startAgent("parser");
     setError(null);
     setSelectedCitation(null);
     setPendingCitation(null);
@@ -266,14 +262,14 @@ function App() {
       setError(err instanceof Error ? err.message : "Failed to analyze referenced paper");
     } finally {
       setBusy(false);
-      setActiveAgent(null);
+      finishAgent("parser");
     }
   };
 
   const handleGenerateCode = async () => {
     if (!sessionId || !activePaper) return;
-    setBusy(true);
-    setActiveAgent("code");
+    if (activeAgents.includes("code")) return;
+    startAgent("code");
     setError(null);
     appendLocalEvent("Code", "Generating a downloadable multi-file project.", "codegen.started");
     try {
@@ -282,8 +278,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate code project");
     } finally {
-      setBusy(false);
-      setActiveAgent(null);
+      finishAgent("code");
     }
   };
 
@@ -377,7 +372,7 @@ function App() {
           <AgentPanel
             events={session?.events ?? []}
             findings={session?.findings ?? []}
-            activeAgent={activeAgent}
+            activeAgents={activeAgents}
             onRunAgent={handleRunAgent}
             onGenerateCode={handleGenerateCode}
             disabled={!activePaper || busy}

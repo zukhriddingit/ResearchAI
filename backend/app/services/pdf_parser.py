@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import re
+from typing import Any
 
 from app.models import Citation, EquationExtract, FigureExtract, PaperSection, TableExtract, new_id
 
@@ -189,12 +191,192 @@ def attach_visuals_to_sections(
             section_map[equation.section_id].equations.append(equation)
 
 
-def extract_figures_from_pdf_bytes(_pdf_bytes: bytes, _sections: list[PaperSection], max_figures: int = 12) -> list[FigureExtract]:
-    return []
+def extract_figures_from_pdf_bytes(
+    pdf_bytes: bytes,
+    sections: list[PaperSection],
+    max_figures: int = 12,
+) -> list[FigureExtract]:
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return []
+
+    figures: list[FigureExtract] = []
+    total_pages = len(doc)
+
+    for page_num in range(total_pages):
+        if len(figures) >= max_figures:
+            break
+        page = doc[page_num]
+        import fitz as _fitz
+
+        for caption, caption_rect in _figure_caption_blocks(page):
+            if len(figures) >= max_figures:
+                break
+            crop_rect = _fitz.Rect(
+                page.rect.x0 + 24,
+                max(page.rect.y0, caption_rect.y0 - 300),
+                page.rect.x1 - 24,
+                max(page.rect.y0, caption_rect.y0 - 8),
+            )
+            if crop_rect.width < 80 or crop_rect.height < 60:
+                continue
+            try:
+                mat = _fitz.Matrix(1.5, 1.5)
+                pix = page.get_pixmap(matrix=mat, clip=crop_rect, colorspace=_fitz.csRGB)
+                image_b64 = base64.b64encode(pix.tobytes("png")).decode()
+            except Exception:
+                continue
+            figures.append(
+                FigureExtract(
+                    caption=caption,
+                    image_b64=image_b64,
+                    page=page_num,
+                    section_id=_page_to_section_id(page_num, total_pages, sections),
+                )
+            )
+
+        try:
+            image_infos = page.get_image_info()
+        except Exception:
+            continue
+        for img_info in image_infos:
+            if len(figures) >= max_figures:
+                break
+            bbox = img_info.get("bbox")
+            if not bbox:
+                continue
+
+            rect = _fitz.Rect(bbox)
+            if rect.width < 80 or rect.height < 60:
+                continue
+            try:
+                mat = _fitz.Matrix(1.5, 1.5)
+                pix = page.get_pixmap(matrix=mat, clip=rect, colorspace=_fitz.csRGB)
+                image_b64 = base64.b64encode(pix.tobytes("png")).decode()
+            except Exception:
+                continue
+            figures.append(
+                FigureExtract(
+                    caption=_find_caption_near_rect(page, rect),
+                    image_b64=image_b64,
+                    page=page_num,
+                    section_id=_page_to_section_id(page_num, total_pages, sections),
+                )
+            )
+
+    doc.close()
+    return figures
 
 
-def extract_tables_from_pdf_bytes(_pdf_bytes: bytes, _sections: list[PaperSection], max_tables: int = 8) -> list[TableExtract]:
-    return []
+def extract_tables_from_pdf_bytes(
+    pdf_bytes: bytes,
+    sections: list[PaperSection],
+    max_tables: int = 8,
+) -> list[TableExtract]:
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return []
+
+    tables: list[TableExtract] = []
+    total_pages = len(doc)
+
+    for page_num in range(total_pages):
+        if len(tables) >= max_tables:
+            break
+        page = doc[page_num]
+        try:
+            found_tables = page.find_tables()
+        except Exception:
+            continue
+        for table in found_tables:
+            if len(tables) >= max_tables:
+                break
+            try:
+                rows = table.extract() or []
+                rows = [[str(cell).strip() if cell else "" for cell in row] for row in rows if any(cell for cell in row)]
+            except Exception:
+                rows = []
+
+            image_b64 = ""
+            import fitz as _fitz
+
+            rect = _fitz.Rect(table.bbox)
+            try:
+                mat = _fitz.Matrix(1.5, 1.5)
+                pix = page.get_pixmap(matrix=mat, clip=rect, colorspace=_fitz.csRGB)
+                image_b64 = base64.b64encode(pix.tobytes("png")).decode()
+            except Exception:
+                pass
+
+            tables.append(
+                TableExtract(
+                    caption=_find_caption_near_rect(page, rect, look_above=True),
+                    rows=rows[:30],
+                    image_b64=image_b64,
+                    section_id=_page_to_section_id(page_num, total_pages, sections),
+                )
+            )
+
+    doc.close()
+    return tables
+
+
+def _find_caption_near_rect(page: Any, rect: Any, look_above: bool = False) -> str | None:
+    try:
+        blocks = page.get_text("blocks")
+        target_y = rect.y0 if look_above else rect.y1
+        best: str | None = None
+        best_dist = float("inf")
+        for block in blocks:
+            bx0, by0, bx1, by1, text, *_ = block
+            text = str(text).strip()
+            if not text:
+                continue
+            lower = text.lower()
+            if not lower.startswith(("figure", "fig.", "fig ", "table", "tab.")):
+                continue
+            block_y = by0 if look_above else by1
+            dist = abs(block_y - target_y)
+            if dist < 60 and dist < best_dist:
+                best_dist = dist
+                best = text[:300]
+        return best
+    except Exception:
+        return None
+
+
+def _figure_caption_blocks(page: Any) -> list[tuple[str, Any]]:
+    try:
+        import fitz as _fitz
+
+        captions: list[tuple[str, Any]] = []
+        for block in page.get_text("blocks"):
+            x0, y0, x1, y1, text, *_ = block
+            text = str(text).strip()
+            lower = text.lower()
+            if lower.startswith(("figure", "fig.", "fig ")) and len(text) > 8:
+                captions.append((text[:300], _fitz.Rect(x0, y0, x1, y1)))
+        return captions
+    except Exception:
+        return []
+
+
+def _page_to_section_id(page_num: int, total_pages: int, sections: list[PaperSection]) -> str | None:
+    if not sections:
+        return None
+    frac = page_num / max(total_pages - 1, 1)
+    index = int(frac * (len(sections) - 1))
+    return sections[min(index, len(sections) - 1)].id
 
 
 def extract_title_from_text(text: str) -> str | None:
@@ -728,13 +910,37 @@ def _normalize_title(title: str) -> str:
 def _looks_like_equation(line: str) -> bool:
     if len(line) < 4 or len(line) > 220:
         return False
-    if re.search(r"\b(table|figure|section|references)\b", line, re.IGNORECASE):
+    if re.search(r"\b(table|figure|section|references|abstract|introduction)\b", line, re.IGNORECASE):
         return False
-    has_operator = bool(re.search(r"[=<>+\-*/^_]|\\frac|\\sum|\\prod|\\int|\\arg|\\min|\\max", line))
-    has_symbol = bool(re.search(r"[A-Za-z][A-Za-z0-9_]*", line))
-    has_math_word = bool(re.search(r"\b(loss|softmax|argmax|argmin|log|exp|rank|matrix|vector)\b", line, re.IGNORECASE))
-    has_label = bool(re.search(r"\(\s*\d+(?:\.\d+)?\s*\)\s*$", line))
-    return has_symbol and (has_label or has_math_word or (has_operator and len(line.split()) <= 26))
+    if any(pattern.search(line) for pattern in TITLE_SKIP_PATTERNS):
+        return False
+    if _looks_like_author_line(line):
+        return False
+
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", line)
+    letters = sum(1 for char in line if char.isalpha())
+    letter_ratio = letters / max(len(line), 1)
+    capitalized = [word for word in words if word[:1].isupper()]
+
+    has_label = bool(re.search(r"\(\s*\d+(?:\.\d+)?\s*\)\.?\s*$", line))
+    has_latex_operator = bool(re.search(r"\\(?:frac|sum|prod|int|arg|min|max|log|exp|nabla|partial)\b", line))
+    has_unicode_operator = bool(re.search(r"[∑∫∏√≤≥≈≠≡∂∇⊗⊕∞]", line))
+    has_assignment = bool(re.search(r"(?<=[A-Za-z0-9)\]}])\s*(?:=|<=|>=|<|>)\s*(?=[A-Za-z0-9({\\[])", line))
+    has_arithmetic = bool(re.search(r"(?<=[A-Za-z0-9)\]}])\s*[+*/^_]\s*(?=[A-Za-z0-9({\\[])", line))
+    has_binary_minus = bool(re.search(r"(?<=[A-Za-z0-9)\]}])\s+-\s+(?=[A-Za-z0-9({\\[])", line))
+    has_math_word = bool(re.search(r"\b(loss|softmax|argmax|argmin|log|exp|rank|matrix|vector|gradient|norm)\b", line, re.IGNORECASE))
+    has_variable = bool(re.search(r"\b[A-Za-z](?:_[A-Za-z0-9]+|\^\w+)?\b", line)) or bool(re.search(r"\\[A-Za-z]+", line))
+
+    strong_math = has_latex_operator or has_unicode_operator or has_assignment or has_arithmetic or has_binary_minus
+    if not strong_math:
+        return False
+
+    if len(words) >= 3 and not has_label and not has_latex_operator and not has_unicode_operator and not has_assignment:
+        return False
+    if len(words) >= 4 and letter_ratio > 0.7 and len(capitalized) / max(len(words), 1) > 0.65 and not has_label:
+        return False
+
+    return has_variable and (has_label or has_math_word or strong_math) and len(line.split()) <= 30
 
 
 def _nearby_text(lines: list[str], index: int, direction: int) -> str:
