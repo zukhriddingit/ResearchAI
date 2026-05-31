@@ -11,6 +11,7 @@ DeepPaper is a multi-agent research reading app for the Multi-Agent Orchestratio
 - Server-Sent Events endpoint with frontend polling fallback.
 - Deterministic LoRA demo fixture that works with no API keys.
 - React/Vite frontend with paper reader, citation chips, graph panel, and agent feed.
+- Harness agents for code search, dry-run replication scoring, benchmark suggestions, and adversarial stress tests.
 - Teammate prompt files under `prompts/`.
 - Optional integration hooks for arXiv, Semantic Scholar, GitHub, Anthropic, and W&B Weave.
 
@@ -31,7 +32,19 @@ backend/ FastAPI
   services/      arXiv, Semantic Scholar, GitHub, PDF parsing, LLM, Weave
 ```
 
-The core protocol is an append-only event stream. Agents emit handoffs such as `paper.parsed`, `citation.resolved`, `critique.finding`, `experiment.missing`, `repo.ready`, `replication.queued`, `benchmark.suggested`, `attack.found`, `node.update`, and `edge.update`.
+The core protocol is an append-only event stream. Agents emit handoffs such as `paper.parsed`, `citation.resolved`, `critique.finding`, `experiment.missing`, `code.search.started`, `repo.ready`, `replication.queued`, `benchmark.suggested`, `attack.found`, `node.update`, and `edge.update`.
+
+The main demo chain is:
+
+```txt
+Reference resolves citation
+  -> Critique flags an experiment gap
+  -> Code finds an implementation repo
+  -> Replication queues a dry-run scorecard
+  -> Evaluation suggests benchmarks
+  -> Adversarial proposes stress tests
+  -> Graph receives paper/code nodes and typed edges
+```
 
 ## Run Backend
 
@@ -83,7 +96,7 @@ WEAVE_PROJECT=deeppaper
 WANDB_API_KEY=
 ```
 
-The demo must still run without these keys.
+The demo still runs without these keys. W&B Weave tracing is a no-op unless both `WEAVE_PROJECT` and `WANDB_API_KEY` are configured.
 
 ## Team Workflow
 
@@ -102,7 +115,7 @@ See `prompts/README.md` for integration order.
 - Anthropic API: optional LLM wrapper in `backend/app/services/llm.py`.
 - arXiv: optional paper metadata and PDF fetch.
 - Semantic Scholar: optional citation/reference resolution.
-- GitHub API: optional code repository search.
+- GitHub API: optional code repository search, with deterministic repo fixture fallback.
 
 ## Known Limits
 
@@ -110,8 +123,8 @@ See `prompts/README.md` for integration order.
 - The LoRA flow is fixture-first for demo reliability.
 - Replication is a local dry-run scorecard, not arbitrary repo execution.
 - Citation extraction is heuristic until Team 2 upgrades it.
+- Code search uses fixture fallback when GitHub is unavailable or not configured.
 
 ## Hackathon Reminder
 
 Prize eligibility requires a public GitHub repository, in-person demo, and submission through the AGI House platform. The final submission should include a demo video under 2 minutes and a project description that lists architecture, orchestration protocol, agent frameworks/tools, and sponsor tools used.
-

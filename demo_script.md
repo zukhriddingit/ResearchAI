@@ -11,6 +11,9 @@ Target length: under 2 minutes.
 7. "The graph now has a typed baseline edge from LoRA to Adapters."
 8. Point to event feed.
 9. "Critique flags a missing matched latency benchmark, Code finds the LoRA repo, and Replication queues a dry-run scorecard."
-10. Run Evaluation or Adversarial.
-11. "This is the product: agents hand work to each other and update shared research memory."
-
+10. "The replication step is intentionally a dry run. It tells us what can be verified, what is blocked, and what a human should check before running external code."
+11. Run Evaluation.
+12. "Evaluation suggests the missing benchmarks: matched latency, rank sensitivity, memory, throughput, and OOD coverage."
+13. Run Adversarial.
+14. "Adversarial turns those claims into stress tests, including rank sensitivity, baseline omissions, and compute edge cases."
+15. "This is the product: agents hand work to each other and update shared research memory."

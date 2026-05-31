@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import weave_tracing
 
 
 client = TestClient(app)
@@ -23,6 +24,9 @@ def test_demo_flow():
     assert clicked["referenced_paper"]["id"] == "paper_adapters"
     assert len(clicked["graph"]["nodes"]) >= 3
     assert len(clicked["graph"]["edges"]) >= 2
+    clicked_event_types = {event["type"] for event in clicked["events"]}
+    assert "repo.ready" in clicked_event_types
+    assert "replication.queued" in clicked_event_types
 
     critique = client.post(
         f"/api/sessions/{session_id}/agents/critique/run",
@@ -30,3 +34,41 @@ def test_demo_flow():
     ).json()
     assert critique["findings"]
 
+    code = client.post(
+        f"/api/sessions/{session_id}/agents/code/run",
+        json={"paper_id": "paper_lora_main", "mode": "manual"},
+    ).json()
+    assert code["output"]["repo"]["full_name"]
+    assert any(event["type"] == "repo.ready" for event in code["events"])
+
+    replication = client.post(
+        f"/api/sessions/{session_id}/agents/replication/run",
+        json={"paper_id": "paper_lora_main", "mode": "manual"},
+    ).json()
+    assert replication["output"]["scorecard"]
+    assert any(event["type"] == "replication.queued" for event in replication["events"])
+
+    evaluation = client.post(
+        f"/api/sessions/{session_id}/agents/evaluation/run",
+        json={"paper_id": "paper_lora_main", "mode": "manual"},
+    ).json()
+    evaluation_event_types = {event["type"] for event in evaluation["events"]}
+    assert "benchmark.suggested" in evaluation_event_types
+    assert "experiment.missing" in evaluation_event_types
+
+    adversarial = client.post(
+        f"/api/sessions/{session_id}/agents/adversarial/run",
+        json={"paper_id": "paper_lora_main", "mode": "manual"},
+    ).json()
+    assert any(event["type"] == "attack.found" for event in adversarial["events"])
+
+
+def test_weave_noop_without_env(monkeypatch):
+    monkeypatch.delenv("WEAVE_PROJECT", raising=False)
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    weave_tracing._initialized = False
+    weave_tracing._weave = None
+
+    assert weave_tracing.init_weave() is False
+    weave_tracing.trace_agent_run("Test", {"input": True}, {"output": True})
+    weave_tracing.log_event({"type": "noop"})

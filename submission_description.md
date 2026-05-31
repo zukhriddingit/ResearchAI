@@ -25,17 +25,17 @@ Reading research papers is slow because each citation, baseline, claim, and impl
 - Frontend: React, Vite, TypeScript, SVG knowledge graph.
 - Agents: Parser, Reference, Critique, Code, Replication, Evaluation, Adversarial.
 - Handoff protocol: typed append-only events such as `paper.parsed`, `citation.resolved`, `experiment.missing`, `repo.ready`, `replication.queued`, `benchmark.suggested`, `attack.found`, `node.update`, and `edge.update`.
+- Harness: Code searches implementation candidates, Replication returns a dry-run scorecard, Evaluation proposes missing experiments, and Adversarial converts claims into stress tests.
 - Reliability: fixture-first LoRA path works without API keys.
 
 ## Sponsor Tools
 
-- W&B Weave: optional trace hooks for agent runs and events.
+- W&B Weave: optional trace hooks for agent runs and events. It is a no-op unless both `WEAVE_PROJECT` and `WANDB_API_KEY` are configured.
 - Anthropic API: optional LLM wrapper for structured completions.
 - arXiv: optional metadata/PDF retrieval.
 - Semantic Scholar: optional paper/reference resolution.
-- GitHub API: optional implementation repository search.
+- GitHub API: optional implementation repository search with deterministic fixture fallback.
 
 ## Demo Notes
 
-The current replication agent is intentionally labeled as a dry-run scorecard. It does not execute arbitrary external research repos during the hackathon demo.
-
+The current replication agent is intentionally labeled as a dry-run scorecard. It does not execute arbitrary external research repos during the hackathon demo; it reports repo availability, metric readiness, blockers, and the next human verification step.

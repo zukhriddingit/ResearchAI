@@ -14,7 +14,8 @@ def init_weave() -> bool:
         return _weave is not None
     _initialized = True
     project = os.getenv("WEAVE_PROJECT")
-    if not project:
+    api_key = os.getenv("WANDB_API_KEY")
+    if not project or not api_key:
         return False
     try:
         import weave  # type: ignore
@@ -44,4 +45,3 @@ def log_event(event: Any) -> None:
         _weave.log({"event": payload})
     except Exception:
         return
-
