@@ -5,12 +5,16 @@ from typing import Any
 
 import httpx
 
+from app.services.weave_tracing import op as weave_op
+
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 FIELDS = "title,abstract,year,authors,citationCount,referenceCount,influentialCitationCount,url,openAccessPdf"
 
 
+@weave_op
 async def search_paper(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Search Semantic Scholar for papers matching the query string."""
     headers = _headers()
     params = {"query": query, "limit": limit, "fields": FIELDS}
     try:
@@ -22,7 +26,9 @@ async def search_paper(query: str, limit: int = 5) -> list[dict[str, Any]]:
         return []
 
 
+@weave_op
 async def get_paper_details(paper_id_or_arxiv_id: str) -> dict[str, Any]:
+    """Fetch full paper details from Semantic Scholar by paper ID or arXiv ID."""
     headers = _headers()
     paper_id = paper_id_or_arxiv_id
     if paper_id_or_arxiv_id and paper_id_or_arxiv_id[0].isdigit():
@@ -36,7 +42,9 @@ async def get_paper_details(paper_id_or_arxiv_id: str) -> dict[str, Any]:
         return {}
 
 
+@weave_op
 async def get_references(paper_id: str) -> list[dict[str, Any]]:
+    """Fetch the reference list of a paper from Semantic Scholar."""
     headers = _headers()
     try:
         async with httpx.AsyncClient(timeout=12.0, headers=headers) as client:
@@ -50,4 +58,3 @@ async def get_references(paper_id: str) -> list[dict[str, Any]]:
 def _headers() -> dict[str, str]:
     api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
     return {"x-api-key": api_key} if api_key else {}
-

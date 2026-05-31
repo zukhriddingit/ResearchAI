@@ -5,35 +5,54 @@ from typing import Any
 
 import httpx
 
+from app.services.weave_tracing import op as weave_op
+
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_ID_RE = re.compile(r"(?P<id>\d{4}\.\d{4,5})(v\d+)?")
+_AUTHOR_RE = re.compile(r"<author>.*?<name>(.*?)</name>.*?</author>", re.DOTALL)
+_PUBLISHED_RE = re.compile(r"<published>(\d{4})-(\d{2})-(\d{2})")
 
 
 def normalize_arxiv_id(source: str) -> str | None:
+    """Extract bare arXiv ID from URLs like https://arxiv.org/abs/2106.09685 or plain IDs."""
     match = ARXIV_ID_RE.search(source)
     return match.group("id") if match else None
 
 
+@weave_op
 async def fetch_arxiv_metadata(arxiv_id: str) -> dict[str, Any]:
+    """Fetch paper metadata from the arXiv Atom API. Returns title, abstract, authors, year."""
     params = {"id_list": arxiv_id}
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        response = await client.get(ARXIV_API_URL, params=params)
-        response.raise_for_status()
-    text = response.text
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.get(ARXIV_API_URL, params=params)
+            response.raise_for_status()
+        text = response.text
+    except Exception:
+        return {"arxiv_id": arxiv_id, "title": None, "abstract": None, "authors": [], "year": None, "raw_atom": ""}
+
+    authors = _AUTHOR_RE.findall(text)
+    published = _PUBLISHED_RE.search(text)
+    year = int(published.group(1)) if published else None
+
     return {
         "arxiv_id": arxiv_id,
         "raw_atom": text,
         "title": _between(text, "<title>", "</title>", skip_first=True),
         "abstract": _between(text, "<summary>", "</summary>"),
+        "authors": [a.strip() for a in authors if a.strip()],
+        "year": year,
     }
 
 
+@weave_op
 async def fetch_arxiv_pdf(arxiv_id: str) -> bytes | None:
+    """Download PDF bytes from arXiv. Returns None on failure (don't block demo on this)."""
     url = f"https://arxiv.org/pdf/{arxiv_id}"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(url)
+            response = await client.get(url, follow_redirects=True)
             response.raise_for_status()
             return response.content
     except Exception:
@@ -53,4 +72,3 @@ def _between(text: str, start: str, end: str, *, skip_first: bool = False) -> st
     if end_index < 0:
         return None
     return " ".join(text[start_index:end_index].split())
-

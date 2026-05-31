@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # load repo-root .env before anything else
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,11 +28,21 @@ from app.models import (
     LoadPaperRequest,
     Paper,
 )
-from app.services.weave_tracing import log_event, trace_agent_run
+from app.services.weave_tracing import init_weave, log_event, trace_agent_run
 from app.store import store
 
 
-app = FastAPI(title="DeepPaper API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    live = init_weave()
+    if live:
+        print("[weave] Tracing active — view traces at https://wandb.ai/home → Weave tab")
+    else:
+        print("[weave] No WEAVE_PROJECT set — tracing disabled")
+    yield
+
+
+app = FastAPI(title="DeepPaper API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
