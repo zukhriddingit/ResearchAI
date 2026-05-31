@@ -26,7 +26,8 @@ def test_uploaded_paper_agent_flow():
         "1. Introduction\n"
         "The paper cites prior work [1] and frames the main problem.\n\n"
         "2. Method\n"
-        "The method introduces a new attention block and reports efficiency improvements.\n\n"
+        "The method introduces a new attention block and reports efficiency improvements.\n"
+        "The training objective is L = x + y (1).\n\n"
         "References\n"
         "[1] Jane Doe and John Smith. A Useful Baseline for Vision Models. In TestConf, 2020."
     )
@@ -73,6 +74,18 @@ def test_uploaded_paper_agent_flow():
     ).json()
     assert code["output"]["repo"]["full_name"]
     assert any(event["type"] == "repo.ready" for event in code["events"])
+
+    math = client.post(
+        f"/api/sessions/{session_id}/agents/math/run",
+        json={"paper_id": paper_id, "mode": "manual"},
+    ).json()
+    assert math["output"]["explanations"]
+
+    code_change = client.post(
+        f"/api/sessions/{session_id}/code/change",
+        json={"paper_id": paper_id, "user_message": "Add a smoke-test TODO for the main method.", "mode": "manual"},
+    ).json()
+    assert code_change["edits"]
 
     replication = client.post(
         f"/api/sessions/{session_id}/agents/replication/run",

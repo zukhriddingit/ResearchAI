@@ -101,6 +101,52 @@ async def complete_text(
         return fallback
 
 
+async def complete_with_vision(
+    system: str,
+    user: str,
+    images_b64: list[str],
+    fallback: str,
+    *,
+    model: str | None = None,
+    temperature: float = 0.2,
+    max_tokens: int = 900,
+) -> str:
+    if not images_b64 or os.getenv("DEEPPAPER_DISABLE_EXTERNAL") == "1":
+        return await complete_text(system, user, fallback, model=model, temperature=temperature, max_tokens=max_tokens)
+
+    wandb_key = os.getenv("WANDB_API_KEY")
+    wandb_project = os.getenv("WANDB_INFERENCE_PROJECT") or os.getenv("WEAVE_PROJECT")
+    if not wandb_key or not wandb_project:
+        return fallback
+
+    try:
+        from openai import AsyncOpenAI
+
+        init_weave()
+        client = AsyncOpenAI(
+            base_url=os.getenv("WANDB_INFERENCE_BASE_URL", WANDB_BASE_URL),
+            api_key=wandb_key,
+            project=wandb_project,
+        )
+        content: list[dict[str, Any]] = [{"type": "text", "text": user}]
+        for image in images_b64[:4]:
+            if image:
+                content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}})
+        response = await client.chat.completions.create(
+            model=model or os.getenv("WANDB_INFERENCE_VISION_MODEL", os.getenv("WANDB_INFERENCE_MODEL", DEFAULT_MODEL)),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        content_text = response.choices[0].message.content if response.choices else None
+        return content_text or fallback
+    except Exception:
+        return fallback
+
+
 def reasoning_model() -> str:
     return os.getenv("WANDB_INFERENCE_REASONING_MODEL", DEFAULT_REASONING_MODEL)
 

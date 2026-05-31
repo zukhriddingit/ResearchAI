@@ -799,6 +799,11 @@ button:disabled {
   color: #0e5673;
 }
 
+.agent-card.action-math {
+  background: #f1ecff;
+  color: #4b367a;
+}
+
 .agent-card.action-replication {
   background: #fff3dc;
   color: #684812;

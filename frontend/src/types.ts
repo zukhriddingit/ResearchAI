@@ -3,8 +3,37 @@ export interface PaperSection {
   title: string;
   type: string;
   text: string;
+  level?: number;
   start_offset?: number | null;
   end_offset?: number | null;
+  figures?: FigureExtract[];
+  tables?: TableExtract[];
+  equations?: EquationExtract[];
+}
+
+export interface FigureExtract {
+  caption?: string | null;
+  image_b64: string;
+  page: number;
+  section_id?: string | null;
+  vision_description?: string | null;
+}
+
+export interface TableExtract {
+  caption?: string | null;
+  rows: string[][];
+  image_b64: string;
+  section_id?: string | null;
+}
+
+export interface EquationExtract {
+  id: string;
+  raw: string;
+  latex: string;
+  label: string;
+  context_before: string;
+  context_after: string;
+  section_id?: string | null;
 }
 
 export interface Citation {
@@ -13,6 +42,8 @@ export interface Citation {
   title?: string | null;
   authors: string[];
   year?: number | null;
+  doi?: string | null;
+  url?: string | null;
   semantic_scholar_id?: string | null;
   arxiv_id?: string | null;
   context_snippet?: string | null;
@@ -39,6 +70,7 @@ export interface Paper {
   sections: PaperSection[];
   citations: Citation[];
   claims: Claim[];
+  equations?: EquationExtract[];
   is_main: boolean;
 }
 

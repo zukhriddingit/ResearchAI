@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.models import Citation, PaperSection, new_id
+from app.models import Citation, EquationExtract, FigureExtract, PaperSection, TableExtract, new_id
 
 
 SECTION_NAMES = [
@@ -91,6 +91,9 @@ TITLE_WORDS = {
     "vision",
 }
 
+DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"'>]+)")
+ARXIV_REF_RE = re.compile(r"arXiv[:\s]+(\d{4}\.\d{4,5}(?:v\d+)?)", re.IGNORECASE)
+
 
 def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     try:
@@ -100,6 +103,98 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
         return "\n".join(page.get_text() for page in doc)
     except Exception:
         return ""
+
+
+def extract_structured_document(pdf_bytes: bytes) -> tuple[list[PaperSection], list[EquationExtract]]:
+    text = extract_text_from_pdf_bytes(pdf_bytes)
+    sections = split_into_sections(text)
+    return sections, extract_equations_from_text(text, sections)
+
+
+def extract_equations_from_text(text: str, sections: list[PaperSection]) -> list[EquationExtract]:
+    equations: list[EquationExtract] = []
+    lines = [line.strip() for line in text.replace("\r", "\n").split("\n")]
+    for index, line in enumerate(lines):
+        clean = re.sub(r"\s+", " ", line).strip()
+        if not _looks_like_equation(clean):
+            continue
+        before = _nearby_text(lines, index, -1)
+        after = _nearby_text(lines, index, 1)
+        label_match = re.search(r"\(\s*\d+(?:\.\d+)?\s*\)\s*$", clean)
+        equations.append(
+            EquationExtract(
+                id=new_id("eq"),
+                raw=clean[:400],
+                label=label_match.group(0).strip() if label_match else "",
+                context_before=before[:300],
+                context_after=after[:300],
+                section_id=_section_for_offset(text, clean, sections),
+            )
+        )
+        if len(equations) >= 60:
+            break
+    return equations
+
+
+def extract_equations_from_latex(latex_source: str, sections: list[PaperSection]) -> list[EquationExtract]:
+    if not latex_source:
+        return []
+    equations: list[EquationExtract] = []
+    patterns = [
+        re.compile(r"\\begin\{(?:equation\*?|align\*?|gather\*?|multline\*?)\}(.*?)\\end\{(?:equation\*?|align\*?|gather\*?|multline\*?)\}", re.DOTALL),
+        re.compile(r"\$\$(.*?)\$\$", re.DOTALL),
+    ]
+    for pattern in patterns:
+        for match in pattern.finditer(latex_source):
+            latex = re.sub(r"\\label\{[^}]+\}", "", match.group(1)).strip()
+            if len(latex) < 4:
+                continue
+            label_match = re.search(r"\\label\{([^}]+)\}", match.group(1))
+            equations.append(
+                EquationExtract(
+                    id=new_id("eq"),
+                    raw=_latex_to_readable_text(latex),
+                    latex=latex[:800],
+                    label=label_match.group(1) if label_match else "",
+                    context_before=latex_source[max(0, match.start() - 250) : match.start()].strip()[-250:],
+                    context_after=latex_source[match.end() : match.end() + 250].strip()[:250],
+                )
+            )
+            if len(equations) >= 60:
+                break
+        if len(equations) >= 60:
+            break
+    for index, equation in enumerate(equations):
+        if sections:
+            section_index = min(int(index / max(len(equations), 1) * len(sections)), len(sections) - 1)
+            equations[index] = equation.model_copy(update={"section_id": sections[section_index].id})
+    return equations
+
+
+def attach_visuals_to_sections(
+    sections: list[PaperSection],
+    figures: list[FigureExtract] | None = None,
+    tables: list[TableExtract] | None = None,
+    equations: list[EquationExtract] | None = None,
+) -> None:
+    section_map = {section.id: section for section in sections}
+    for figure in figures or []:
+        if figure.section_id in section_map:
+            section_map[figure.section_id].figures.append(figure)
+    for table in tables or []:
+        if table.section_id in section_map:
+            section_map[table.section_id].tables.append(table)
+    for equation in equations or []:
+        if equation.section_id in section_map:
+            section_map[equation.section_id].equations.append(equation)
+
+
+def extract_figures_from_pdf_bytes(_pdf_bytes: bytes, _sections: list[PaperSection], max_figures: int = 12) -> list[FigureExtract]:
+    return []
+
+
+def extract_tables_from_pdf_bytes(_pdf_bytes: bytes, _sections: list[PaperSection], max_tables: int = 8) -> list[TableExtract]:
+    return []
 
 
 def extract_title_from_text(text: str) -> str | None:
@@ -310,6 +405,9 @@ def extract_citations(text: str, sections: list[PaperSection]) -> list[Citation]
             title=metadata.get("title"),
             authors=metadata.get("authors", []),
             year=metadata.get("year"),
+            doi=metadata.get("doi"),
+            url=f"https://doi.org/{metadata['doi']}" if metadata.get("doi") else (f"https://arxiv.org/abs/{metadata['arxiv_id']}" if metadata.get("arxiv_id") else None),
+            arxiv_id=metadata.get("arxiv_id"),
             context_snippet=_snippet(text, match.start(), match.end()),
         )
 
@@ -325,10 +423,25 @@ def extract_citations(text: str, sections: list[PaperSection]) -> list[Citation]
             title=metadata.get("title"),
             authors=metadata.get("authors", []),
             year=metadata.get("year"),
+            doi=metadata.get("doi"),
+            url=f"https://doi.org/{metadata['doi']}" if metadata.get("doi") else (f"https://arxiv.org/abs/{metadata['arxiv_id']}" if metadata.get("arxiv_id") else None),
+            arxiv_id=metadata.get("arxiv_id"),
             context_snippet=_snippet(text, match.start(), match.end()),
         )
 
     return list(citations.values())
+
+
+def enrich_citations_with_links(citations: list[Citation], bib_text: str) -> None:
+    for citation in citations:
+        numbers = _citation_numbers(citation.raw.strip("[]")) if citation.raw.startswith("[") else []
+        metadata = _citation_metadata(numbers, _extract_reference_metadata(bib_text))
+        if metadata.get("doi") and not citation.doi:
+            citation.doi = str(metadata["doi"])
+            citation.url = citation.url or f"https://doi.org/{citation.doi}"
+        if metadata.get("arxiv_id") and not citation.arxiv_id:
+            citation.arxiv_id = str(metadata["arxiv_id"])
+            citation.url = citation.url or f"https://arxiv.org/abs/{citation.arxiv_id}"
 
 
 def _references_start(text: str) -> int | None:
@@ -355,6 +468,8 @@ def _extract_reference_metadata(text: str) -> dict[str, dict[str, object]]:
             "title": title,
             "authors": _reference_authors(body),
             "year": _reference_year(body),
+            "doi": _reference_doi(body),
+            "arxiv_id": _reference_arxiv_id(body),
         }
     return metadata
 
@@ -378,6 +493,8 @@ def _extract_author_year_reference_metadata(text: str) -> dict[str, dict[str, ob
                 "title": title,
                 "authors": _reference_authors(body),
                 "year": year,
+                "doi": _reference_doi(body),
+                "arxiv_id": _reference_arxiv_id(body),
             },
         )
     return metadata
@@ -411,12 +528,16 @@ def _citation_metadata(numbers: list[str], references: dict[str, dict[str, objec
             "title": titles[0] if titles else None,
             "authors": matches[0].get("authors", []),
             "year": matches[0].get("year"),
+            "doi": matches[0].get("doi"),
+            "arxiv_id": matches[0].get("arxiv_id"),
         }
 
     return {
         "title": "; ".join(titles[:3]),
         "authors": matches[0].get("authors", []),
         "year": matches[0].get("year"),
+        "doi": matches[0].get("doi"),
+        "arxiv_id": matches[0].get("arxiv_id"),
     }
 
 
@@ -452,6 +573,16 @@ def _reference_title(entry: str) -> str | None:
             return title
 
     return None
+
+
+def _reference_doi(entry: str) -> str | None:
+    match = DOI_RE.search(entry)
+    return match.group(1).rstrip(".") if match else None
+
+
+def _reference_arxiv_id(entry: str) -> str | None:
+    match = ARXIV_REF_RE.search(entry)
+    return match.group(1) if match else None
 
 
 def _looks_like_reference_title(title: str) -> bool:
@@ -592,3 +723,63 @@ def _normalize_title(title: str) -> str:
     title = re.sub(r"\s+", " ", title).strip(" .")
     title = re.sub(r"\s+([:;,])", r"\1", title)
     return title
+
+
+def _looks_like_equation(line: str) -> bool:
+    if len(line) < 4 or len(line) > 220:
+        return False
+    if re.search(r"\b(table|figure|section|references)\b", line, re.IGNORECASE):
+        return False
+    has_operator = bool(re.search(r"[=<>+\-*/^_]|\\frac|\\sum|\\prod|\\int|\\arg|\\min|\\max", line))
+    has_symbol = bool(re.search(r"[A-Za-z][A-Za-z0-9_]*", line))
+    has_math_word = bool(re.search(r"\b(loss|softmax|argmax|argmin|log|exp|rank|matrix|vector)\b", line, re.IGNORECASE))
+    has_label = bool(re.search(r"\(\s*\d+(?:\.\d+)?\s*\)\s*$", line))
+    return has_symbol and (has_label or has_math_word or (has_operator and len(line.split()) <= 26))
+
+
+def _nearby_text(lines: list[str], index: int, direction: int) -> str:
+    cursor = index + direction
+    while 0 <= cursor < len(lines):
+        candidate = re.sub(r"\s+", " ", lines[cursor]).strip()
+        if candidate and not _looks_like_equation(candidate):
+            return candidate
+        cursor += direction
+    return ""
+
+
+def _section_for_offset(text: str, needle: str, sections: list[PaperSection]) -> str | None:
+    offset = text.find(needle)
+    if offset < 0:
+        return sections[0].id if sections else None
+    for section in sections:
+        if section.start_offset is not None and section.end_offset is not None and section.start_offset <= offset <= section.end_offset:
+            return section.id
+    return sections[0].id if sections else None
+
+
+def _latex_to_readable_text(latex: str) -> str:
+    text = re.sub(r"\\(?:frac|dfrac)\{([^}]+)\}\{([^}]+)\}", r"(\1)/(\2)", latex)
+    replacements = {
+        r"\\sum": "sum",
+        r"\\prod": "prod",
+        r"\\int": "integral",
+        r"\\alpha": "alpha",
+        r"\\beta": "beta",
+        r"\\gamma": "gamma",
+        r"\\delta": "delta",
+        r"\\theta": "theta",
+        r"\\lambda": "lambda",
+        r"\\sigma": "sigma",
+        r"\\leq": "<=",
+        r"\\geq": ">=",
+        r"\\neq": "!=",
+        r"\\approx": "~=",
+        r"\\cdot": "*",
+        r"\\times": "*",
+    }
+    for pattern, value in replacements.items():
+        text = re.sub(pattern, value, text)
+    text = re.sub(r"\\(?:text|mathbf|mathit|mathrm)\{([^}]+)\}", r"\1", text)
+    text = re.sub(r"\\[a-zA-Z]+", "", text)
+    text = re.sub(r"[{}]", "", text)
+    return " ".join(text.split())[:400]

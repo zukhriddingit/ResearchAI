@@ -9,9 +9,10 @@ from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 
 from app.agents.adversarial_agent import run_adversarial_agent
-from app.agents.code_agent import run_code_agent
+from app.agents.code_agent import apply_suggestions, apply_user_change, run_code_agent
 from app.agents.critique_agent import run_critique_agent
 from app.agents.evaluation_agent import run_evaluation_agent
+from app.agents.math_agent import run_math_agent
 from app.agents.parser_agent import run_parser_agent
 from app.agents.reference_agent import run_reference_agent
 from app.agents.replication_agent import run_replication_agent
@@ -19,6 +20,7 @@ from app.events import emit, stream_events
 from app.models import (
     AgentRunRequest,
     Citation,
+    CodeChangeRequest,
     CreateSessionResponse,
     GraphEdge,
     GraphNode,
@@ -347,6 +349,12 @@ async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
             for finding in findings:
                 store.add_finding(session_id, finding)
             output = {"findings": [finding.model_dump() for finding in findings]}
+        elif normalized_agent == "math":
+            output = await traced_agent_call(
+                "Math",
+                {"session_id": session_id, "paper_id": paper.id, "section_id": section.id if section else None},
+                lambda: run_math_agent(session, paper, section=section, event_emitter=emit),
+            )
         elif normalized_agent == "code":
             output = await traced_agent_call(
                 "Code",
@@ -392,6 +400,38 @@ async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
         "findings": session.findings,
         "graph": session.graph,
     }
+
+
+@app.post("/api/sessions/{session_id}/code/change")
+async def code_change(session_id: str, request: CodeChangeRequest):
+    session = _session_or_404(session_id)
+    paper = _paper_by_id(session, request.paper_id) if request.paper_id else _main_paper_or_404(session)
+    repo = _repo_from_graph(session_id)
+    started_at = len(session.events)
+    edits = []
+
+    if request.finding_ids:
+        targeted_findings = [finding for finding in session.findings if finding.id in request.finding_ids]
+        if targeted_findings:
+            edits.extend(await apply_suggestions(paper, targeted_findings, repo, event_emitter=emit, session=session))
+
+    if request.user_message.strip():
+        edits.append(
+            await apply_user_change(
+                paper,
+                request.user_message,
+                repo,
+                target_files=request.target_files or None,
+                event_emitter=emit,
+                session=session,
+            )
+        )
+
+    if not edits:
+        emit(session_id, "code.no_changes", "No findings or user message provided.", agent="Code", status="done")
+
+    session = store.get_session(session_id)
+    return {"edits": [edit.model_dump() for edit in edits], "events": session.events[started_at:]}
 
 
 def _session_or_404(session_id: str):
@@ -608,6 +648,14 @@ def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any]) -> N
     store.add_edge(session_id, edge)
     emit(session_id, "node.update", "Code repo node added to graph.", agent="Graph", status="done", payload=node.model_dump())
     emit(session_id, "edge.update", "Implementation edge added to graph.", agent="Graph", status="done", payload=edge.model_dump())
+
+
+def _repo_from_graph(session_id: str) -> dict[str, Any]:
+    session = store.get_session(session_id)
+    for node in reversed(session.graph.nodes):
+        if node.type == "code":
+            return dict(node.metadata)
+    return {"name": "no-repo-selected", "full_name": "local/no-repo-selected", "html_url": None}
 
 
 def _serializable(output: Any) -> Any:

@@ -321,6 +321,7 @@ function agentActionMessage(agentName: string) {
     parser: "Parser usually runs when loading or uploading a paper.",
     critique: "Critique Agent is looking for weak claims, missing baselines, and reproducibility gaps.",
     code: "Code Agent is searching for implementation repositories and connecting them to the paper.",
+    math: "Math Agent is explaining equations and checking notation.",
     replication: "Replication Agent is building a dry-run scorecard for the current paper.",
     evaluation: "Evaluation Agent is suggesting benchmarks and measurement gaps.",
     adversarial: "Adversarial Agent is generating stress tests against the strongest claims.",

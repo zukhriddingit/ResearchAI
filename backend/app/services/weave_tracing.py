@@ -32,6 +32,16 @@ def init_weave() -> bool:
         return False
 
 
+def op(fn: Callable) -> Callable:
+    """Wrap a function as a Weave op when the package is available."""
+    try:
+        import weave  # type: ignore
+
+        return weave.op()(fn)
+    except Exception:
+        return fn
+
+
 async def traced_agent_call(
     agent_name: str,
     inputs: dict[str, Any],

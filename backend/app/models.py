@@ -20,8 +20,43 @@ class PaperSection(BaseModel):
     title: str
     type: str
     text: str
+    level: int = 1
     start_offset: int | None = None
     end_offset: int | None = None
+    figures: list["FigureExtract"] = Field(default_factory=list)
+    tables: list["TableExtract"] = Field(default_factory=list)
+    equations: list["EquationExtract"] = Field(default_factory=list)
+
+
+class FigureExtract(BaseModel):
+    caption: str | None = None
+    image_b64: str = ""
+    page: int = 0
+    section_id: str | None = None
+    vision_description: str | None = None
+
+
+class TableExtract(BaseModel):
+    caption: str | None = None
+    rows: list[list[str]] = Field(default_factory=list)
+    image_b64: str = ""
+    section_id: str | None = None
+
+
+class EquationExtract(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("eq"))
+    raw: str
+    latex: str = ""
+    label: str = ""
+    context_before: str = ""
+    context_after: str = ""
+    section_id: str | None = None
+
+
+class AgentTrigger(BaseModel):
+    target: str
+    reason: str
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class Citation(BaseModel):
@@ -30,6 +65,8 @@ class Citation(BaseModel):
     title: str | None = None
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
+    doi: str | None = None
+    url: str | None = None
     semantic_scholar_id: str | None = None
     arxiv_id: str | None = None
     context_snippet: str | None = None
@@ -56,7 +93,24 @@ class Paper(BaseModel):
     sections: list[PaperSection] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     claims: list[Claim] = Field(default_factory=list)
+    equations: list[EquationExtract] = Field(default_factory=list)
     is_main: bool = False
+
+
+class CodeEdit(BaseModel):
+    file_path: str
+    change_type: Literal["add", "modify", "delete"] = "modify"
+    description: str
+    original_snippet: str = ""
+    new_snippet: str = ""
+    rationale: str = ""
+
+
+class CodeChangeRequest(BaseModel):
+    paper_id: str | None = None
+    user_message: str = ""
+    finding_ids: list[str] = Field(default_factory=list)
+    target_files: list[str] = Field(default_factory=list)
 
 
 class GraphNode(BaseModel):

@@ -1,4 +1,4 @@
-import { Activity, BookOpen, Brain, ChevronDown, ChevronRight, FlaskConical, GitBranch, GitPullRequest, Radar, SearchCode, ShieldAlert } from "lucide-react";
+import { Activity, BookOpen, Brain, Calculator, ChevronDown, ChevronRight, FlaskConical, GitBranch, GitPullRequest, Radar, SearchCode, ShieldAlert } from "lucide-react";
 import type { AgentEvent, AgentFinding } from "../types";
 import FindingCard from "./FindingCard";
 
@@ -14,6 +14,7 @@ const assistantActions = [
   { agent: "reference", label: "Explain citations", icon: GitPullRequest, detail: "Connect the first citation to this paper", tone: "reference" },
   { agent: "critique", label: "Review claims", icon: ShieldAlert, detail: "Surface weak baselines and missing checks", tone: "critique" },
   { agent: "code", label: "Find implementation", icon: SearchCode, detail: "Look for code that matches the paper", tone: "code" },
+  { agent: "math", label: "Explain math", icon: Calculator, detail: "Explain equations and audit notation", tone: "math" },
   { agent: "replication", label: "Plan replication", icon: FlaskConical, detail: "Create a lightweight reproduction scorecard", tone: "replication" },
   { agent: "evaluation", label: "Improve evaluation", icon: Activity, detail: "Suggest benchmarks and metrics", tone: "evaluation" },
   { agent: "adversarial", label: "Stress test", icon: Radar, detail: "Challenge the strongest claims", tone: "adversarial" },
@@ -117,6 +118,7 @@ function inferStatus(agent: string, latest: AgentEvent[]) {
     reference: ["reference"],
     critique: ["critique"],
     code: ["code"],
+    math: ["math"],
     replication: ["replication"],
     evaluation: ["evaluation"],
     adversarial: ["adversarial"],
@@ -158,6 +160,13 @@ function buildWorkProducts(events: AgentEvent[]) {
         id: event.id,
         title: "Replication plan",
         body: String(payload.claim_under_test || payload.status || "A dry-run replication scorecard is ready.")
+      });
+    }
+    if (event.type === "math.issue") {
+      products.push({
+        id: event.id,
+        title: String(payload.title || "Math issue"),
+        body: String(payload.description || event.message)
       });
     }
     if (event.type === "paper.stored") {
@@ -204,6 +213,7 @@ function humanizeEvent(event: AgentEvent) {
     "critique.finding": "New insight added.",
     "experiment.missing": "Follow-up experiment identified.",
     "repo.ready": "Implementation repository found.",
+    "math.issue": "Math issue added.",
     "replication.queued": "Replication plan ready.",
     "benchmark.suggested": "Benchmark suggestion added.",
     "attack.found": "Stress test added.",
