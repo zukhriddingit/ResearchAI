@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.models import Citation, GraphEdge, Paper, new_id
 from app.services.fixtures import load_lora_fixture
 from app.services.llm import complete_json, reasoning_model
@@ -41,6 +43,29 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
                 "supporting_evidence": [citation.context_snippet or citation.raw],
                 "possible_contradiction": None,
             }
+
+    if not resolved and citation.title:
+        title = _citation_search_query(citation)
+        resolved = {
+            "paper": {
+                "id": f"paper_ref_{_slug(title)}",
+                "title": title,
+                "authors": citation.authors,
+                "year": citation.year,
+                "abstract": citation.context_snippet,
+                "semantic_scholar_id": citation.semantic_scholar_id,
+                "arxiv_id": citation.arxiv_id,
+                "sections": [],
+                "citations": [],
+                "claims": [],
+                "is_main": False,
+            },
+            "relationship": "contextualizes",
+            "summary": f"Relative to {main_paper.title}, this cited work provides background for the local claim.",
+            "why_it_matters_for_main_paper": "The paper cites it directly, so it should be part of the reading trail even when live metadata search is unavailable.",
+            "supporting_evidence": [citation.context_snippet or citation.raw],
+            "possible_contradiction": None,
+        }
 
     if not resolved:
         resolved = fixture["references"]["cit_adapter"]
@@ -112,3 +137,8 @@ def _citation_search_query(citation: Citation) -> str:
     if citation.title:
         return citation.title.split(";")[0].strip()
     return citation.raw.strip()
+
+
+def _slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug[:80] or new_id("reference")

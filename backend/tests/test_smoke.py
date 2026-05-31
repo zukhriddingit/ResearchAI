@@ -26,11 +26,10 @@ def test_demo_flow():
 
     clicked = client.post(f"/api/sessions/{session_id}/citations/cit_adapter/click").json()
     assert clicked["referenced_paper"]["id"] == "paper_adapters"
-    assert len(clicked["graph"]["nodes"]) >= 3
-    assert len(clicked["graph"]["edges"]) >= 2
+    assert len(clicked["graph"]["nodes"]) >= 2
+    assert len(clicked["graph"]["edges"]) >= 1
     clicked_event_types = {event["type"] for event in clicked["events"]}
-    assert "repo.ready" in clicked_event_types
-    assert "replication.queued" in clicked_event_types
+    assert "citation.resolved" in clicked_event_types
 
     critique = client.post(
         f"/api/sessions/{session_id}/agents/critique/run",

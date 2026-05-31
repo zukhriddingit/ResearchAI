@@ -257,35 +257,13 @@ async def click_citation(session_id: str, citation_id: str):
             payload={"citation_id": citation.id, "note": reference_result["summary"]["possible_contradiction"]},
         )
 
-    critique_section = main_paper.sections[1] if len(main_paper.sections) > 1 else None
-    findings = await traced_agent_call(
-        "Critique",
-        {"session_id": session_id, "paper_id": main_paper.id, "section_id": critique_section.id if critique_section else None},
-        lambda: run_critique_agent(session, main_paper, critique_section, main_paper, emit),
-    )
-    for finding in findings:
-        store.add_finding(session_id, finding)
-
-    code_result = await traced_agent_call(
-        "Code",
-        {"session_id": session_id, "paper_id": main_paper.id, "finding_id": findings[0].id if findings else None},
-        lambda: run_code_agent(session, main_paper, finding=findings[0] if findings else None, event_emitter=emit),
-    )
-    _add_repo_to_graph(session_id, main_paper, code_result["repo"])
-    replication_result = await traced_agent_call(
-        "Replication",
-        {"session_id": session_id, "paper_id": main_paper.id, "repo": code_result["repo"].get("full_name")},
-        lambda: run_replication_agent(session, main_paper, repo=code_result["repo"], finding=findings[0] if findings else None, event_emitter=emit),
-    )
-    trace_agent_run("ReferenceClick", {"citation_id": citation_id}, {"paper_id": referenced_paper.id, "repo": code_result["repo"]["full_name"]})
+    trace_agent_run("ReferenceClick", {"citation_id": citation_id}, {"paper_id": referenced_paper.id})
 
     session = store.get_session(session_id)
     return {
         "citation": citation,
         "referenced_paper": referenced_paper,
         "summary": reference_result["summary"],
-        "code": code_result,
-        "replication": replication_result,
         "graph": session.graph,
         "events": session.events,
         "findings": session.findings,

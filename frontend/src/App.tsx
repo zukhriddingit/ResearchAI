@@ -26,6 +26,10 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    setSelectedCitation(null);
+    setPendingCitation(null);
+    setSelectedPaperId(null);
+    setReadingHistory([]);
     createSession()
       .then((created) => {
         if (!cancelled) {
@@ -183,10 +187,11 @@ function App() {
     appendLocalEvent("Reference", `Resolving ${citation?.raw ?? "citation"} against the main paper.`);
     try {
       const result = await clickCitation(sessionId, citationId);
+      const state = await getSession(sessionId);
+      setSession(state);
       setSelectedCitation(result);
       setSelectedPaperId(result.referenced_paper.id);
       rememberPaper(result.referenced_paper.id);
-      await refreshSession();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resolve citation");
     } finally {
@@ -264,7 +269,7 @@ function App() {
             onCitationClick={handleCitationClick}
             onRunAgent={handleRunAgent}
           />
-          {(selectedCitation || pendingCitation) && <CitationPopover result={selectedCitation} pendingCitation={pendingCitation} />}
+          {activePaper && (selectedCitation || pendingCitation) && <CitationPopover result={selectedCitation} pendingCitation={pendingCitation} />}
         </section>
         <section className="agent-column" aria-label="Agent events">
           <AgentPanel
