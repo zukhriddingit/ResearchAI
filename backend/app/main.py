@@ -63,12 +63,8 @@ def create_session() -> CreateSessionResponse:
     session = store.create_session()
     event = emit(session.session_id, "session.created", "DeepPaper session created.", agent="Graph", status="done")
     log_event(event)
-    return CreateSessionResponse(
-        session_id=session.session_id,
-        created_at=session.created_at,
-        graph=session.graph,
-        events=session.events,
-    )
+    return CreateSessionResponse(session_id=session.session_id, created_at=session.created_at,
+                                 graph=session.graph, events=session.events)
 
 
 @app.get("/api/sessions/{session_id}")
@@ -90,28 +86,21 @@ def events_stream(session_id: str):
 @app.post("/api/sessions/{session_id}/papers/load")
 async def load_paper(session_id: str, request: LoadPaperRequest):
     session = _session_or_404(session_id)
-    emit(session_id, "paper.loading", "Loading paper source.", agent="Parser", status="running", payload=request.model_dump())
+    emit(session_id, "paper.loading", "Loading paper source.", agent="Parser", status="running",
+         payload=request.model_dump())
     paper = await run_parser_agent(session, request.source_type, request.source, emit)
     store.add_paper(session_id, paper)
 
-    node = GraphNode(
-        id=f"node_{paper.id}",
-        label=paper.title,
-        type="paper",
-        status="main" if paper.is_main else "referenced",
-        paper_id=paper.id,
-        metadata={"authors": paper.authors, "year": paper.year, "arxiv_id": paper.arxiv_id},
-    )
+    node = GraphNode(id=f"node_{paper.id}", label=paper.title, type="paper",
+                     status="main" if paper.is_main else "referenced", paper_id=paper.id,
+                     metadata={"authors": paper.authors, "year": paper.year, "arxiv_id": paper.arxiv_id})
     store.add_node(session_id, node)
-    emit(
-        session_id,
-        "paper.parsed",
-        "Main paper parsed into sections, citations, and claims.",
-        agent="Parser",
-        status="done",
-        payload={"paper_id": paper.id, "sections": len(paper.sections), "citations": len(paper.citations)},
-    )
-    emit(session_id, "node.update", "Main paper node added to graph.", agent="Graph", status="done", payload=node.model_dump())
+    emit(session_id, "paper.parsed",
+         "Main paper parsed into sections, citations, and claims.",
+         agent="Parser", status="done",
+         payload={"paper_id": paper.id, "sections": len(paper.sections), "citations": len(paper.citations)})
+    emit(session_id, "node.update", "Main paper node added to graph.",
+         agent="Graph", status="done", payload=node.model_dump())
     trace_agent_run("Parser", request.model_dump(), {"paper_id": paper.id})
 
     session = store.get_session(session_id)
@@ -124,62 +113,89 @@ async def click_citation(session_id: str, citation_id: str):
     main_paper = _main_paper_or_404(session)
     citation = _citation_or_404(main_paper, citation_id)
 
-    emit(session_id, "citation.clicked", f"Citation {citation.raw} clicked.", agent="Reader", status="done", payload={"citation_id": citation.id})
-    emit(session_id, "citation.resolving", "Reference Agent resolving citation in main-paper context.", agent="Reference", status="running")
+    emit(session_id, "citation.clicked", f"Citation {citation.raw} clicked.",
+         agent="Reader", status="done", payload={"citation_id": citation.id})
+    emit(session_id, "citation.resolving",
+         "Reference Agent resolving citation in main-paper context.",
+         agent="Reference", status="running")
+
+    # ── 1. Reference Agent ────────────────────────────────────────────────────
     reference_result = await run_reference_agent(session, main_paper, citation, emit)
     referenced_paper: Paper = reference_result["referenced_paper"]
     citation.resolved_paper_id = referenced_paper.id
     store.add_paper(session_id, main_paper)
     store.add_paper(session_id, referenced_paper)
 
-    ref_node = GraphNode(
-        id=f"node_{referenced_paper.id}",
-        label=referenced_paper.title,
-        type="paper",
-        status="referenced",
-        paper_id=referenced_paper.id,
-        metadata={"authors": referenced_paper.authors, "year": referenced_paper.year},
-    )
+    ref_node = GraphNode(id=f"node_{referenced_paper.id}", label=referenced_paper.title,
+                         type="paper", status="referenced", paper_id=referenced_paper.id,
+                         metadata={"authors": referenced_paper.authors, "year": referenced_paper.year})
     edge: GraphEdge = reference_result["edge"]
     store.add_node(session_id, ref_node)
     store.add_edge(session_id, edge)
-    emit(
-        session_id,
-        "citation.resolved",
-        "Citation resolved relative to the main paper.",
-        agent="Reference",
-        status="done",
-        payload={"citation": citation.model_dump(), "summary": reference_result["summary"]},
-    )
-    emit(session_id, "node.update", "Reference paper node added to graph.", agent="Graph", status="done", payload=ref_node.model_dump())
-    emit(session_id, "edge.update", "Contextual citation edge added to graph.", agent="Graph", status="done", payload=edge.model_dump())
+    emit(session_id, "citation.resolved", "Citation resolved relative to the main paper.",
+         agent="Reference", status="done",
+         payload={"citation": citation.model_dump(), "summary": reference_result["summary"]})
+    emit(session_id, "node.update", "Reference paper node added to graph.",
+         agent="Graph", status="done", payload=ref_node.model_dump())
+    emit(session_id, "edge.update", "Contextual citation edge added to graph.",
+         agent="Graph", status="done", payload=edge.model_dump())
 
     if reference_result["summary"].get("possible_contradiction"):
-        emit(
-            session_id,
-            "paper.contradiction",
-            "Reference Agent found a caveat worth checking.",
-            agent="Reference",
-            status="flagged",
-            payload={"citation_id": citation.id, "note": reference_result["summary"]["possible_contradiction"]},
-        )
+        emit(session_id, "paper.contradiction",
+             "Reference Agent found a caveat worth checking.",
+             agent="Reference", status="flagged",
+             payload={"citation_id": citation.id,
+                      "note": reference_result["summary"]["possible_contradiction"]})
 
-    findings = await run_critique_agent(session, main_paper, main_paper.sections[1] if len(main_paper.sections) > 1 else None, main_paper, emit)
+    # ── 2. Critique Agent ─────────────────────────────────────────────────────
+    critique_section = main_paper.sections[1] if len(main_paper.sections) > 1 else None
+    findings = await run_critique_agent(session, main_paper, critique_section, main_paper, emit)
     for finding in findings:
         store.add_finding(session_id, finding)
 
-    code_result = await run_code_agent(session, main_paper, finding=findings[0] if findings else None, event_emitter=emit)
+    # Process any triggers from critique (missing experiment → code scaffolding)
+    critique_triggers = _collect_triggers(findings)
+    await _process_triggers(session_id, critique_triggers, main_paper)
+
+    # ── 3. Code Agent ─────────────────────────────────────────────────────────
+    code_result = await run_code_agent(session, main_paper,
+                                       finding=findings[0] if findings else None, event_emitter=emit)
     _add_repo_to_graph(session_id, main_paper, code_result["repo"])
-    replication_result = await run_replication_agent(session, main_paper, repo=code_result["repo"], finding=findings[0] if findings else None, event_emitter=emit)
-    trace_agent_run("ReferenceClick", {"citation_id": citation_id}, {"paper_id": referenced_paper.id, "repo": code_result["repo"]["full_name"]})
+
+    # ── 4. Replication + Adversarial (from Code Agent triggers) ──────────────
+    code_triggers = code_result.get("triggers", [])
+    replication_result = await run_replication_agent(
+        session, main_paper, repo=code_result["repo"],
+        finding=findings[0] if findings else None, event_emitter=emit
+    )
+
+    # Process replication discrepancy triggers → critique
+    replication_triggers = replication_result.get("triggers", [])
+    await _process_triggers(session_id, replication_triggers, main_paper)
+
+    adversarial_result = await run_adversarial_agent(
+        session, main_paper, repo=code_result["repo"], event_emitter=emit
+    )
+
+    # ── 5. Evaluation Agent ───────────────────────────────────────────────────
+    eval_section = next((s for s in main_paper.sections if "eval" in s.type or "result" in s.type), None)
+    evaluation_findings = await run_evaluation_agent(
+        session, main_paper, section=eval_section, event_emitter=emit
+    )
+    for finding in evaluation_findings:
+        store.add_finding(session_id, finding)
+
+    trace_agent_run("ReferenceClick", {"citation_id": citation_id},
+                    {"paper_id": referenced_paper.id, "repo": code_result["repo"].get("full_name")})
 
     session = store.get_session(session_id)
     return {
         "citation": citation,
         "referenced_paper": referenced_paper,
         "summary": reference_result["summary"],
-        "code": code_result,
-        "replication": replication_result,
+        "code": _serializable(code_result),
+        "replication": _serializable(replication_result),
+        "adversarial": _serializable(adversarial_result),
         "graph": session.graph,
         "events": session.events,
         "findings": session.findings,
@@ -196,39 +212,43 @@ async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
     output: Any
 
     try:
-        normalized_agent = agent_name.lower()
-        if normalized_agent == "parser":
+        normalized = agent_name.lower()
+        if normalized == "parser":
             output = {"message": "Parser is run through /papers/load in this starter."}
-            emit(session_id, "agent.finished", "Parser endpoint hint returned.", agent="Parser", status="done", payload=output)
-        elif normalized_agent == "reference":
-            citation = _citation_or_404(paper, request.citation_id or (paper.citations[0].id if paper.citations else ""))
+            emit(session_id, "agent.finished", "Parser endpoint hint returned.",
+                 agent="Parser", status="done", payload=output)
+        elif normalized == "reference":
+            citation = _citation_or_404(
+                paper, request.citation_id or (paper.citations[0].id if paper.citations else ""))
             output = await run_reference_agent(session, paper, citation, emit)
-        elif normalized_agent == "critique":
+        elif normalized == "critique":
             findings = await run_critique_agent(session, paper, section, paper, emit)
-            for finding in findings:
-                store.add_finding(session_id, finding)
-            output = {"findings": [finding.model_dump() for finding in findings]}
-        elif normalized_agent == "code":
+            for f in findings:
+                store.add_finding(session_id, f)
+            output = {"findings": [f.model_dump() for f in findings]}
+        elif normalized == "code":
             output = await run_code_agent(session, paper, section=section, event_emitter=emit)
             _add_repo_to_graph(session_id, paper, output["repo"])
-        elif normalized_agent == "replication":
+        elif normalized == "replication":
             output = await run_replication_agent(session, paper, event_emitter=emit)
-        elif normalized_agent == "evaluation":
+        elif normalized == "evaluation":
             findings = await run_evaluation_agent(session, paper, section=section, event_emitter=emit)
-            for finding in findings:
-                store.add_finding(session_id, finding)
-            output = {"findings": [finding.model_dump() for finding in findings]}
-        elif normalized_agent == "adversarial":
+            for f in findings:
+                store.add_finding(session_id, f)
+            output = {"findings": [f.model_dump() for f in findings]}
+        elif normalized == "adversarial":
             output = await run_adversarial_agent(session, paper, event_emitter=emit)
         else:
-            output = {"message": f"{agent_name} is not implemented yet. Deterministic stub completed."}
+            output = {"message": f"{agent_name} is not implemented yet."}
             emit(session_id, "agent.started", f"{agent_name} stub started.", agent=agent_name, status="running")
-            emit(session_id, "agent.finished", f"{agent_name} stub finished.", agent=agent_name, status="done", payload=output)
+            emit(session_id, "agent.finished", f"{agent_name} stub finished.", agent=agent_name, status="done",
+                 payload=output)
     except Exception as exc:
         emit(session_id, "agent.failed", f"{agent_name} failed: {exc}", agent=agent_name, status="failed")
         raise
 
-    trace_agent_run(agent_name, request.model_dump(), output if isinstance(output, dict) else {"output": str(output)})
+    trace_agent_run(agent_name, request.model_dump(),
+                    output if isinstance(output, dict) else {"output": str(output)})
     session = store.get_session(session_id)
     return {
         "agent": agent_name,
@@ -238,6 +258,54 @@ async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
         "graph": session.graph,
     }
 
+
+# ---------------------------------------------------------------------------
+# Trigger processing
+# ---------------------------------------------------------------------------
+
+def _collect_triggers(findings) -> list[dict]:
+    """Extract trigger dicts embedded in finding objects if present."""
+    triggers = []
+    for f in findings:
+        if hasattr(f, "_triggers"):
+            triggers.extend(f._triggers)  # type: ignore[attr-defined]
+    return triggers
+
+
+async def _process_triggers(session_id: str, triggers: list[dict], paper: Paper) -> None:
+    """
+    Process agent-to-agent trigger requests.
+
+    Current supported triggers:
+      replication_discrepancy → adds new critique finding
+      adversarial_attack_found → adds new critique finding
+    """
+    session = store.get_session(session_id)
+    for trigger in triggers:
+        target = trigger.get("target")
+        reason = trigger.get("reason")
+        context = trigger.get("context", {})
+
+        if target == "critique" and reason in ("replication_discrepancy", "adversarial_attack_found"):
+            from app.models import AgentFinding, new_id
+            body = (
+                f"Discrepancies detected: {'; '.join(context.get('discrepancies', [])[:3])}"
+                if reason == "replication_discrepancy"
+                else f"Attack '{context.get('attack_name')}' targets: {context.get('claim_targeted', '')}"
+            )
+            finding = AgentFinding(
+                id=new_id("finding"), agent="Critique", severity="medium",
+                title=context.get("attack_name") or "Replication discrepancy detected",
+                body=body[:600], related_paper_id=paper.id,
+            )
+            store.add_finding(session_id, finding)
+            emit(session_id, "critique.finding", finding.title,
+                 agent="Critique", status="medium", payload=finding.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _session_or_404(session_id: str):
     try:
@@ -277,33 +345,24 @@ def _section_by_id(paper: Paper, section_id: str | None):
 
 def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any]) -> None:
     safe_name = (repo.get("full_name") or repo.get("name") or "repo").replace("/", "_").replace(" ", "_").lower()
-    node = GraphNode(
-        id=f"node_repo_{safe_name}",
-        label=repo.get("full_name") or repo.get("name") or "Implementation repo",
-        type="code",
-        status="code-found",
-        metadata=repo,
-    )
-    edge = GraphEdge(
-        id=f"edge_{paper.id}_{node.id}",
-        source=f"node_{paper.id}",
-        target=node.id,
-        type="implements",
-        label="implements",
-        confidence=0.72,
-        evidence=[repo.get("match_reason", "Code Agent selected this repo.")],
-    )
+    node = GraphNode(id=f"node_repo_{safe_name}", label=repo.get("full_name") or repo.get("name") or "repo",
+                     type="code", status="code-found", metadata=repo)
+    edge = GraphEdge(id=f"edge_{paper.id}_{node.id}", source=f"node_{paper.id}", target=node.id,
+                     type="implements", label="implements", confidence=0.72,
+                     evidence=[repo.get("match_reason", "Code Agent selected this repo.")])
     store.add_node(session_id, node)
     store.add_edge(session_id, edge)
-    emit(session_id, "node.update", "Code repo node added to graph.", agent="Graph", status="done", payload=node.model_dump())
-    emit(session_id, "edge.update", "Implementation edge added to graph.", agent="Graph", status="done", payload=edge.model_dump())
+    emit(session_id, "node.update", "Code repo node added to graph.", agent="Graph", status="done",
+         payload=node.model_dump())
+    emit(session_id, "edge.update", "Implementation edge added to graph.", agent="Graph", status="done",
+         payload=edge.model_dump())
 
 
 def _serializable(output: Any) -> Any:
     if hasattr(output, "model_dump"):
         return output.model_dump()
     if isinstance(output, dict):
-        return {key: _serializable(value) for key, value in output.items()}
+        return {k: _serializable(v) for k, v in output.items() if k != "triggers"}
     if isinstance(output, list):
         return [_serializable(item) for item in output]
     return output

@@ -15,6 +15,47 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:10]}"
 
 
+# ---------------------------------------------------------------------------
+# Visual extraction models (figures, tables from PDF)
+# ---------------------------------------------------------------------------
+
+class FigureExtract(BaseModel):
+    """A figure cropped from a PDF page, base64-encoded."""
+    caption: str | None = None
+    image_b64: str = ""        # base64 PNG — may be empty if PDF unavailable
+    page: int = 0
+    section_id: str | None = None
+
+
+class TableExtract(BaseModel):
+    """A table extracted from a PDF page as structured rows."""
+    caption: str | None = None
+    rows: list[list[str]] = Field(default_factory=list)
+    image_b64: str = ""        # raw crop of the table for vision critique
+    section_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Agent trigger — structured handoff between agents
+# ---------------------------------------------------------------------------
+
+class AgentTrigger(BaseModel):
+    """
+    A structured trigger emitted by one agent to kick off another.
+
+    `target`  — the agent to invoke next (lowercase name)
+    `reason`  — why it was triggered (e.g. "contradiction_detected")
+    `context` — arbitrary data the target agent needs
+    """
+    target: str
+    reason: str
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Core paper models
+# ---------------------------------------------------------------------------
+
 class PaperSection(BaseModel):
     id: str
     title: str
@@ -22,6 +63,8 @@ class PaperSection(BaseModel):
     text: str
     start_offset: int | None = None
     end_offset: int | None = None
+    figures: list[FigureExtract] = Field(default_factory=list)
+    tables: list[TableExtract] = Field(default_factory=list)
 
 
 class Citation(BaseModel):
@@ -59,6 +102,10 @@ class Paper(BaseModel):
     is_main: bool = False
 
 
+# ---------------------------------------------------------------------------
+# Graph models
+# ---------------------------------------------------------------------------
+
 class GraphNode(BaseModel):
     id: str
     label: str
@@ -82,6 +129,10 @@ class GraphState(BaseModel):
     nodes: list[GraphNode] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
 
+
+# ---------------------------------------------------------------------------
+# Session / event models
+# ---------------------------------------------------------------------------
 
 class AgentEvent(BaseModel):
     id: str = Field(default_factory=lambda: new_id("evt"))
@@ -115,6 +166,10 @@ class SessionState(BaseModel):
     findings: list[AgentFinding] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
 class LoadPaperRequest(BaseModel):
     source_type: Literal["arxiv_url", "pdf_text", "demo"]
     source: str
@@ -132,4 +187,3 @@ class CreateSessionResponse(BaseModel):
     created_at: str
     graph: GraphState
     events: list[AgentEvent]
-
