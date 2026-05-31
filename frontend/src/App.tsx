@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle } from "lucide-react";
-import { apiBase, clickCitation, createSession, getEvents, getSession, loadPaper, runAgent, subscribeEvents, uploadPaper } from "./api";
+import { analyzePaper, apiBase, clickCitation, createSession, getEvents, getSession, loadPaper, runAgent, subscribeEvents, uploadPaper } from "./api";
 import AgentPanel from "./components/AgentPanel";
 import CitationPopover from "./components/CitationPopover";
 import KnowledgeGraph from "./components/KnowledgeGraph";
@@ -237,6 +237,26 @@ function App() {
     }
   };
 
+  const handleAnalyzePaper = async (paperId: string) => {
+    if (!sessionId) return;
+    setBusy(true);
+    setActiveAgent("parser");
+    setError(null);
+    setSelectedCitation(null);
+    setPendingCitation(null);
+    appendLocalEvent("Parser", "Creating a new research session for this referenced paper.");
+    try {
+      const state = await analyzePaper(sessionId, paperId);
+      setSessionId(state.session_id);
+      applySessionState(state, state.main_paper_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to analyze referenced paper");
+    } finally {
+      setBusy(false);
+      setActiveAgent(null);
+    }
+  };
+
   const handlePaperSelect = useCallback((paperId: string) => {
     setSelectedPaperId(paperId);
     rememberPaper(paperId);
@@ -269,6 +289,7 @@ function App() {
             activeCitationId={pendingCitation?.id ?? null}
             onCitationClick={handleCitationClick}
             onRunAgent={handleRunAgent}
+            onAnalyzePaper={handleAnalyzePaper}
           />
           {activePaper && (selectedCitation || pendingCitation) && <CitationPopover result={selectedCitation} pendingCitation={pendingCitation} />}
         </section>

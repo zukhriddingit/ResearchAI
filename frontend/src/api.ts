@@ -55,6 +55,10 @@ export async function clickCitation(sessionId: string, citationId: string, paper
   return request(`/api/sessions/${sessionId}/citations/${citationId}/click${query}`, { method: "POST" });
 }
 
+export async function analyzePaper(sessionId: string, paperId: string): Promise<SessionState> {
+  return request(`/api/sessions/${sessionId}/papers/${paperId}/analyze`, { method: "POST" });
+}
+
 export async function runAgent(sessionId: string, agentName: string, payload: AgentRunRequest) {
   return request(`/api/sessions/${sessionId}/agents/${agentName}/run`, {
     method: "POST",

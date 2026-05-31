@@ -370,6 +370,15 @@ button:disabled {
   font-size: 12px;
 }
 
+.node-link {
+  display: inline-flex;
+  margin-top: 8px;
+  color: #0f6a82;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .node-detail dl {
   display: grid;
   gap: 7px;
@@ -485,6 +494,22 @@ button:disabled {
   font-size: 12px;
   font-weight: 900;
   text-decoration: none;
+}
+
+.analyze-paper-button {
+  width: fit-content;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #95c9bd;
+  background: #eaf7f4;
+  color: #0e5d51;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .eyebrow {

@@ -48,6 +48,13 @@ def test_uploaded_paper_agent_flow():
     assert len(clicked["graph"]["edges"]) >= 1
     clicked_event_types = {event["type"] for event in clicked["events"]}
     assert "citation.resolved" in clicked_event_types
+    referenced_paper_id = clicked["referenced_paper"]["id"]
+
+    promoted = client.post(f"/api/sessions/{session_id}/papers/{referenced_paper_id}/analyze").json()
+    assert promoted["session_id"] != session_id
+    assert promoted["main_paper_id"] == referenced_paper_id
+    assert promoted["papers"][0]["is_main"] is True
+    assert promoted["graph"]["nodes"][0]["status"] == "main"
 
     critique = client.post(
         f"/api/sessions/{session_id}/agents/critique/run",

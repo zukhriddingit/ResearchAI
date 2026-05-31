@@ -1,5 +1,5 @@
 import { GitBranch } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphNode, GraphState } from "../types";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 
 function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperSelect }: Props) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const previousPaperId = useRef<string | null | undefined>(undefined);
   const width = 360;
   const height = 520;
   const centerX = width / 2;
@@ -31,9 +32,12 @@ function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperS
   useEffect(() => {
     if (!graph.nodes.length) {
       setSelectedNodeId(null);
+      previousPaperId.current = selectedPaperId;
       return;
     }
-    if (selectedPaperNode && selectedNodeId !== selectedPaperNode.id) {
+    const selectedPaperChanged = previousPaperId.current !== selectedPaperId;
+    previousPaperId.current = selectedPaperId;
+    if (selectedPaperChanged && selectedPaperNode && selectedNodeId !== selectedPaperNode.id) {
       setSelectedNodeId(selectedPaperNode.id);
       return;
     }
@@ -68,26 +72,13 @@ function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperS
             );
           })}
           {nodes.map((node) => (
-            <g
+            <GraphNodeView
               key={node.id}
-              transform={`translate(${node.x} ${node.y})`}
-              className={`graph-node ${selectedNode?.id === node.id ? "is-selected" : ""}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => selectNode(node, setSelectedNodeId, onPaperSelect)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") selectNode(node, setSelectedNodeId, onPaperSelect);
-              }}
-            >
-              <circle r={node.status === "main" ? 34 : 25} className={`node-circle node-${node.type} status-${node.status}`} />
-              <text y={4} className="node-initials">
-                {initials(node.label)}
-              </text>
-              <text y={node.status === "main" ? 51 : 42} className="node-label">
-                {shortLabel(node.label)}
-              </text>
-              <title>{node.label}</title>
-            </g>
+              node={node}
+              selected={selectedNode?.id === node.id}
+              onSelect={() => selectNode(node, setSelectedNodeId, onPaperSelect)}
+              onPreview={() => setSelectedNodeId(node.id)}
+            />
           ))}
         </svg>
       )}
@@ -117,9 +108,52 @@ function KnowledgeGraph({ graph, selectedPaperId, historyPaperIds = [], onPaperS
   );
 }
 
+function GraphNodeView({
+  node,
+  selected,
+  onSelect,
+  onPreview,
+}: {
+  node: GraphNode & { x: number; y: number };
+  selected: boolean;
+  onSelect: () => void;
+  onPreview: () => void;
+}) {
+  const url = externalUrl(node);
+  const content = (
+    <g
+      transform={`translate(${node.x} ${node.y})`}
+      className={`graph-node ${selected ? "is-selected" : ""}`}
+      role={url ? "link" : "button"}
+      tabIndex={0}
+      onClick={url ? onPreview : onSelect}
+      onKeyDown={(event) => {
+        if (!url && (event.key === "Enter" || event.key === " ")) onSelect();
+      }}
+    >
+      <circle r={node.status === "main" ? 34 : 25} className={`node-circle node-${node.type} status-${node.status}`} />
+      <text y={4} className="node-initials">
+        {initials(node.label)}
+      </text>
+      <text y={node.status === "main" ? 51 : 42} className="node-label">
+        {shortLabel(node.label)}
+      </text>
+      <title>{node.label}</title>
+    </g>
+  );
+  if (!url) return content;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" onClick={onPreview}>
+      {content}
+    </a>
+  );
+}
+
 function selectNode(node: GraphNode, setSelectedNodeId: (id: string) => void, onPaperSelect?: (paperId: string) => void) {
   setSelectedNodeId(node.id);
   if (node.paper_id) onPaperSelect?.(node.paper_id);
+  const url = externalUrl(node);
+  if (url) window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function initials(label: string) {
@@ -136,7 +170,10 @@ function shortLabel(label: string, length = 20) {
 }
 
 function NodeDetail({ node }: { node: GraphNode }) {
-  const metadataRows = Object.entries(node.metadata ?? {}).filter(([, value]) => value !== null && value !== undefined).slice(0, 4);
+  const url = externalUrl(node);
+  const metadataRows = Object.entries(node.metadata ?? {})
+    .filter(([key, value]) => key !== "html_url" && value !== null && value !== undefined)
+    .slice(0, 4);
   return (
     <div className="node-detail">
       <div className="node-detail-head">
@@ -144,6 +181,11 @@ function NodeDetail({ node }: { node: GraphNode }) {
         <span>{node.status}</span>
       </div>
       <p>{node.type === "code" ? "Implementation artifact" : "Research paper"}</p>
+      {url && (
+        <a className="node-link" href={url} target="_blank" rel="noreferrer">
+          Open GitHub repository
+        </a>
+      )}
       {metadataRows.length > 0 && (
         <dl>
           {metadataRows.map(([key, value]) => (
@@ -156,6 +198,14 @@ function NodeDetail({ node }: { node: GraphNode }) {
       )}
     </div>
   );
+}
+
+function externalUrl(node: GraphNode) {
+  if (node.type !== "code") return null;
+  const value = node.metadata?.html_url ?? node.metadata?.url;
+  if (typeof value === "string" && /^https?:\/\//.test(value)) return value;
+  const fullName = node.metadata?.full_name;
+  return typeof fullName === "string" && /^[\w.-]+\/[\w.-]+$/.test(fullName) ? `https://github.com/${fullName}` : null;
 }
 
 function formatValue(value: unknown) {

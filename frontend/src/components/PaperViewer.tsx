@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, ChevronUp, ExternalLink, FlaskConical, SearchCode } from "lucide-react";
+import { Bot, ChevronDown, ChevronUp, ExternalLink, FileSearch, FlaskConical, SearchCode } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import type { Citation, Paper, PaperSection } from "../types";
@@ -9,9 +9,10 @@ interface Props {
   activeCitationId: string | null;
   onCitationClick: (citationId: string) => void;
   onRunAgent: (agentName: string, payload?: { section_id?: string }) => void;
+  onAnalyzePaper: (paperId: string) => void;
 }
 
-function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgent }: Props) {
+function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgent, onAnalyzePaper }: Props) {
   if (!paper) {
     return (
       <div className="reader-empty">
@@ -43,6 +44,12 @@ function PaperViewer({ paper, busy, activeCitationId, onCitationClick, onRunAgen
               <ExternalLink size={13} />
               <span>Original paper</span>
             </a>
+          )}
+          {!paper.is_main && (
+            <button className="analyze-paper-button" type="button" disabled={busy} onClick={() => onAnalyzePaper(paper.id)}>
+              <FileSearch size={15} />
+              <span>Analyze as new session</span>
+            </button>
           )}
         </div>
         <div className="paper-actions">

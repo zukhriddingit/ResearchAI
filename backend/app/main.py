@@ -18,14 +18,18 @@ from app.agents.replication_agent import run_replication_agent
 from app.events import emit, stream_events
 from app.models import (
     AgentRunRequest,
+    Citation,
     CreateSessionResponse,
     GraphEdge,
     GraphNode,
     LoadPaperRequest,
     Paper,
+    PaperSection,
 )
 from app.services.cloudinary_storage import upload_paper_asset
+from app.services.arxiv_client import fetch_arxiv_pdf
 from app.services.pdf_parser import extract_text_from_pdf_bytes
+from app.services.semantic_scholar_client import get_references
 from app.services.weave_tracing import log_event, trace_agent_run, traced_agent_call
 from app.store import store
 
@@ -277,6 +281,53 @@ async def click_citation(session_id: str, citation_id: str, paper_id: str | None
     }
 
 
+@app.post("/api/sessions/{session_id}/papers/{paper_id}/analyze")
+async def analyze_paper_as_new_session(session_id: str, paper_id: str):
+    source_session = _session_or_404(session_id)
+    source_paper = _paper_by_id(source_session, paper_id)
+    new_session = store.create_session()
+    event = emit(
+        new_session.session_id,
+        "session.created",
+        "DeepPaper session created from referenced paper.",
+        agent="Graph",
+        status="done",
+        payload={"source_session_id": session_id, "source_paper_id": paper_id},
+    )
+    log_event(event)
+
+    paper = await _prepare_promoted_paper(new_session, source_paper)
+    store.add_paper(new_session.session_id, paper)
+
+    node = GraphNode(
+        id=f"node_{paper.id}",
+        label=paper.title,
+        type="paper",
+        status="main",
+        paper_id=paper.id,
+        metadata={
+            "authors": paper.authors,
+            "year": paper.year,
+            "arxiv_id": paper.arxiv_id,
+            "semantic_scholar_id": paper.semantic_scholar_id,
+            "source_url": paper.source_url,
+            "source_session_id": session_id,
+        },
+    )
+    store.add_node(new_session.session_id, node)
+    emit(
+        new_session.session_id,
+        "paper.promoted",
+        "Referenced paper promoted into a new research session.",
+        agent="Parser",
+        status="done",
+        payload={"paper_id": paper.id, "sections": len(paper.sections), "citations": len(paper.citations)},
+    )
+    emit(new_session.session_id, "node.update", "Main paper node added to graph.", agent="Graph", status="done", payload=node.model_dump())
+    trace_agent_run("PaperPromotion", {"source_session_id": session_id, "paper_id": paper_id}, {"new_session_id": new_session.session_id})
+    return store.get_session(new_session.session_id)
+
+
 @app.post("/api/sessions/{session_id}/agents/{agent_name}/run")
 async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
     session = _session_or_404(session_id)
@@ -407,14 +458,102 @@ def _title_from_filename(filename: str) -> str:
     return " ".join(stem.replace("_", " ").replace("-", " ").split()).title()
 
 
+async def _prepare_promoted_paper(session, source_paper: Paper) -> Paper:
+    if source_paper.arxiv_id:
+        pdf_bytes = await fetch_arxiv_pdf(source_paper.arxiv_id)
+        if pdf_bytes:
+            text = extract_text_from_pdf_bytes(pdf_bytes)
+            if len(text.strip()) >= 80:
+                parsed = await traced_agent_call(
+                    "Parser",
+                    {"source_type": "promoted_arxiv_pdf", "paper_id": source_paper.id, "arxiv_id": source_paper.arxiv_id},
+                    lambda: run_parser_agent(session, "pdf_text", text, emit),
+                )
+                parsed.id = source_paper.id
+                parsed.title = source_paper.title or parsed.title
+                parsed.authors = source_paper.authors or parsed.authors
+                parsed.year = source_paper.year or parsed.year
+                parsed.source_url = source_paper.source_url or f"https://arxiv.org/abs/{source_paper.arxiv_id}"
+                parsed.arxiv_id = source_paper.arxiv_id
+                parsed.semantic_scholar_id = source_paper.semantic_scholar_id
+                parsed.is_main = True
+                return parsed
+
+    paper = source_paper.model_copy(deep=True)
+    paper.is_main = True
+    if not paper.sections and paper.abstract:
+        paper.sections = [
+            PaperSection(
+                id=f"{paper.id}_abstract",
+                title="Abstract",
+                type="abstract",
+                text=paper.abstract,
+            )
+        ]
+    if paper.semantic_scholar_id and not paper.citations:
+        references = await get_references(paper.semantic_scholar_id)
+        paper.citations = _citations_from_semantic_references(references)
+    return paper
+
+
+def _citations_from_semantic_references(references: list[dict[str, Any]], limit: int = 30) -> list[Citation]:
+    citations: list[Citation] = []
+    for index, item in enumerate(references[:limit], start=1):
+        cited = item.get("citedPaper") if isinstance(item.get("citedPaper"), dict) else item
+        if not isinstance(cited, dict) or not cited.get("title"):
+            continue
+        source_url = _semantic_source_url(cited)
+        citations.append(
+            Citation(
+                id=f"cit_semantic_{index}_{_slug(str(cited['title']))}",
+                raw=f"[{index}]",
+                title=str(cited["title"]),
+                authors=[author.get("name", "") for author in cited.get("authors", []) if isinstance(author, dict) and author.get("name")],
+                year=cited.get("year"),
+                semantic_scholar_id=cited.get("paperId"),
+                arxiv_id=_arxiv_id_from_url(source_url),
+                context_snippet=f"Reference listed by Semantic Scholar for {cited['title']}.",
+            )
+        )
+    return citations
+
+
+def _semantic_source_url(paper: dict[str, Any]) -> str | None:
+    open_pdf = paper.get("openAccessPdf")
+    if isinstance(open_pdf, dict) and open_pdf.get("url"):
+        return str(open_pdf["url"])
+    if paper.get("url"):
+        return str(paper["url"])
+    return None
+
+
+def _arxiv_id_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    import re
+
+    match = re.search(r"arxiv\.org/(?:abs|pdf)/(?P<id>\d{4}\.\d{4,5})(?:v\d+)?", url)
+    return match.group("id") if match else None
+
+
+def _slug(value: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:80] or "item"
+
+
 def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any]) -> None:
     safe_name = (repo.get("full_name") or repo.get("name") or "repo").replace("/", "_").replace(" ", "_").lower()
+    repo_metadata = dict(repo)
+    full_name = str(repo_metadata.get("full_name") or "")
+    if not repo_metadata.get("html_url") and "/" in full_name and not full_name.startswith("local/"):
+        repo_metadata["html_url"] = f"https://github.com/{full_name}"
     node = GraphNode(
         id=f"node_repo_{safe_name}",
         label=repo.get("full_name") or repo.get("name") or "Implementation repo",
         type="code",
         status="code-found",
-        metadata=repo,
+        metadata=repo_metadata,
     )
     edge = GraphEdge(
         id=f"edge_{paper.id}_{node.id}",

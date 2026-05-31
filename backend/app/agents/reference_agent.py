@@ -29,6 +29,8 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
                     "authors": [author.get("name", "") for author in match.get("authors", []) if author.get("name")],
                     "year": match.get("year"),
                     "abstract": match.get("abstract"),
+                    "source_url": _paper_source_url(match),
+                    "arxiv_id": _arxiv_id_from_url(_paper_source_url(match)) or citation.arxiv_id,
                     "semantic_scholar_id": match.get("paperId"),
                     "sections": [],
                     "citations": [],
@@ -51,6 +53,7 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
                 "authors": citation.authors,
                 "year": citation.year,
                 "abstract": citation.context_snippet,
+                "source_url": f"https://arxiv.org/abs/{citation.arxiv_id}" if citation.arxiv_id else None,
                 "semantic_scholar_id": citation.semantic_scholar_id,
                 "arxiv_id": citation.arxiv_id,
                 "sections": [],
@@ -73,6 +76,7 @@ async def run_reference_agent(session, main_paper: Paper, citation: Citation, ev
                 "authors": citation.authors,
                 "year": citation.year,
                 "abstract": citation.context_snippet,
+                "source_url": f"https://arxiv.org/abs/{citation.arxiv_id}" if citation.arxiv_id else None,
                 "semantic_scholar_id": citation.semantic_scholar_id,
                 "arxiv_id": citation.arxiv_id,
                 "sections": [],
@@ -154,6 +158,22 @@ def _citation_search_query(citation: Citation) -> str:
     if citation.title:
         return citation.title.split(";")[0].strip()
     return citation.raw.strip()
+
+
+def _paper_source_url(match: dict) -> str | None:
+    open_pdf = match.get("openAccessPdf")
+    if isinstance(open_pdf, dict) and open_pdf.get("url"):
+        return str(open_pdf["url"])
+    if match.get("url"):
+        return str(match["url"])
+    return None
+
+
+def _arxiv_id_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    match = re.search(r"arxiv\.org/(?:abs|pdf)/(?P<id>\d{4}\.\d{4,5})(?:v\d+)?", url)
+    return match.group("id") if match else None
 
 
 def _slug(value: str) -> str:
