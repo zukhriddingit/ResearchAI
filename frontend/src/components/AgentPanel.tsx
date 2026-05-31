@@ -8,15 +8,16 @@ import {
   Calculator,
   ChevronDown,
   ChevronRight,
+  Download,
   ExternalLink,
   FlaskConical,
   GitBranch,
   GitPullRequest,
   Loader2,
-  Radar,
   SearchCode,
   ShieldAlert
 } from "lucide-react";
+import { apiBase } from "../api";
 import type { AgentEvent, AgentFinding } from "../types";
 import FindingCard from "./FindingCard";
 
@@ -26,6 +27,7 @@ interface Props {
   activeAgent: string | null;
   disabled: boolean;
   onRunAgent: (agentName: string) => void;
+  onGenerateCode: () => void;
 }
 
 type AssistantAction = {
@@ -42,6 +44,8 @@ type WorkProduct = {
   title: string;
   body: string;
   href?: string;
+  badge?: string;
+  canGenerateCode?: boolean;
 };
 
 const assistantActions: AssistantAction[] = [
@@ -51,11 +55,10 @@ const assistantActions: AssistantAction[] = [
   { agent: "math", label: "Explain math", icon: Calculator, detail: "Explain equations and audit notation", tone: "math" },
   { agent: "replication", label: "Plan replication", icon: FlaskConical, detail: "Create a lightweight reproduction scorecard", tone: "replication" },
   { agent: "evaluation", label: "Improve evaluation", icon: Activity, detail: "Suggest benchmarks and metrics", tone: "evaluation" },
-  { agent: "adversarial", label: "Stress test", icon: Radar, detail: "Challenge the strongest claims", tone: "adversarial" },
   { agent: "graph", label: "Refresh map", icon: GitBranch, detail: "Sync the research map", tone: "graph" }
 ];
 
-function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent }: Props) {
+function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent, onGenerateCode }: Props) {
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const latest = [...events].reverse();
   const active = assistantActions.find((action) => action.agent === activeAgent);
@@ -74,6 +77,7 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent }: Pro
         findings={findings}
         onBack={() => setSelectedTask(null)}
         onRunAgent={onRunAgent}
+        onGenerateCode={onGenerateCode}
       />
     );
   }
@@ -127,9 +131,16 @@ function AgentPanel({ events, findings, activeAgent, disabled, onRunAgent }: Pro
                 <p>{product.body}</p>
                 {product.href && (
                   <a href={product.href} target="_blank" rel="noreferrer">
-                    Open source
+                    {product.agent === "code" && product.title.includes(".zip") ? "Download ZIP" : "Open source"}
                   </a>
                 )}
+                {product.canGenerateCode && (
+                  <button className="inline-action-button" type="button" disabled={disabled} onClick={onGenerateCode}>
+                    <Download size={13} />
+                    Generate code ZIP
+                  </button>
+                )}
+                {product.badge && <span className="result-badge">{product.badge}</span>}
               </div>
             </div>
           ))}
@@ -185,7 +196,8 @@ function TaskDetailPanel({
   events,
   findings,
   onBack,
-  onRunAgent
+  onRunAgent,
+  onGenerateCode
 }: {
   action: AssistantAction;
   activeAgent: string | null;
@@ -194,6 +206,7 @@ function TaskDetailPanel({
   findings: AgentFinding[];
   onBack: () => void;
   onRunAgent: (agentName: string) => void;
+  onGenerateCode: () => void;
 }) {
   const latest = [...events].reverse();
   const Icon = action.icon;
@@ -236,9 +249,16 @@ function TaskDetailPanel({
                 {product.href && (
                   <a href={product.href} target="_blank" rel="noreferrer">
                     <ExternalLink size={13} />
-                    Open source
+                    {product.title.includes(".zip") ? "Download ZIP" : "Open source"}
                   </a>
                 )}
+                {product.canGenerateCode && (
+                  <button className="inline-action-button" type="button" disabled={disabled} onClick={onGenerateCode}>
+                    <Download size={13} />
+                    Generate code ZIP
+                  </button>
+                )}
+                {product.badge && <span className="result-badge">{product.badge}</span>}
               </div>
             </div>
           ))}
@@ -292,7 +312,6 @@ function inferStatus(agent: string, latest: AgentEvent[]) {
     math: ["math"],
     replication: ["replication"],
     evaluation: ["evaluation"],
-    adversarial: ["adversarial"],
     graph: ["graph"]
   };
   const names = aliases[agent] ?? [agent];
@@ -319,14 +338,14 @@ function statusLabel(status: string) {
 function eventBelongsToAgent(event: AgentEvent, agent: string) {
   const eventAgent = event.agent?.toLowerCase() ?? "";
   if (eventAgent.includes(agent)) return true;
+  if (eventAgent) return false;
   const typeAliases: Record<string, string[]> = {
     reference: ["citation.resolving", "citation.resolved"],
     critique: ["critique.finding", "experiment.missing"],
-    code: ["repo.ready"],
+    code: ["repo.ready", "code.generation_available", "codegen.started", "codegen.progress", "codegen.done"],
     math: ["math.issue"],
     replication: ["replication.queued"],
-    evaluation: ["benchmark.suggested"],
-    adversarial: ["attack.found"],
+    evaluation: ["evaluation.plan", "benchmark.suggested", "experiment.missing"],
     graph: ["node.update", "edge.update"]
   };
   return typeAliases[agent]?.includes(event.type) ?? false;
@@ -347,12 +366,43 @@ function buildWorkProducts(events: AgentEvent[]) {
     }
     if (event.type === "repo.ready") {
       const repo = payload.repo as { full_name?: string; html_url?: string; match_reason?: string } | undefined;
+      const confidence = payload.implementation_confidence as
+        | { confidence?: number; verdict?: string; rationale?: string; recommend_generate?: boolean }
+        | undefined;
+      const score = typeof confidence?.confidence === "number" ? confidence.confidence : null;
+      const bodyParts = [
+        confidence?.rationale,
+        repo?.match_reason,
+      ].filter(Boolean);
       products.push({
         id: event.id,
         agent: "code",
         title: repo?.full_name || "Implementation found",
-        body: repo?.match_reason || "A candidate implementation repository is ready.",
-        href: repo?.html_url
+        body: bodyParts.join(" ") || "A candidate implementation repository is ready.",
+        href: repo?.html_url,
+        badge: score !== null ? `${Math.round(score * 100)}% ${confidence?.verdict ?? "confidence"}` : undefined,
+        canGenerateCode: Boolean(confidence?.recommend_generate) || (score !== null && score < 0.65)
+      });
+    }
+    if (event.type === "code.generation_available") {
+      const confidence = payload.implementation_confidence as { confidence?: number; rationale?: string } | undefined;
+      products.push({
+        id: event.id,
+        agent: "code",
+        title: "Generated project available",
+        body: confidence?.rationale || event.message,
+        badge: typeof confidence?.confidence === "number" ? `${Math.round(confidence.confidence * 100)}% match` : undefined,
+        canGenerateCode: true
+      });
+    }
+    if (event.type === "codegen.done") {
+      const downloadUrl = typeof payload.download_url === "string" ? `${apiBase()}${payload.download_url}` : undefined;
+      products.push({
+        id: event.id,
+        agent: "code",
+        title: `${String(payload.project_name || "generated-project")}.zip`,
+        body: `${String(payload.file_count || "Multi-file")} files generated. ${String(payload.total_lines || "")} lines ready to download.`.trim(),
+        href: downloadUrl
       });
     }
     if (event.type === "replication.queued") {
@@ -389,10 +439,17 @@ function buildWorkProducts(events: AgentEvent[]) {
       });
     }
     if (event.type === "benchmark.suggested") {
-      products.push({ id: event.id, agent: "evaluation", title: "Benchmark suggestion", body: event.message });
+      const finding = payload as { title?: string; body?: string; severity?: string };
+      products.push({ id: event.id, agent: "evaluation", title: finding.title || "Benchmark suggestion", body: finding.body || event.message, badge: finding.severity });
     }
-    if (event.type === "attack.found") {
-      products.push({ id: event.id, agent: "adversarial", title: "Stress test", body: event.message });
+    if (event.type === "evaluation.plan") {
+      const eventFindings = Array.isArray(payload.findings) ? payload.findings : [];
+      products.push({
+        id: event.id,
+        agent: "evaluation",
+        title: "Evaluation plan",
+        body: eventFindings.length > 0 ? `${eventFindings.length} benchmark improvement(s) ready. Open Insights for the full list.` : event.message,
+      });
     }
     if (event.type === "node.update" || event.type === "edge.update") {
       products.push({ id: event.id, agent: "graph", title: "Research map update", body: event.message });
@@ -420,10 +477,14 @@ function humanizeEvent(event: AgentEvent) {
     "critique.finding": "New insight added.",
     "experiment.missing": "Follow-up experiment identified.",
     "repo.ready": "Implementation repository found.",
+    "code.generation_available": "Generated project option is ready.",
+    "codegen.started": "Generating code project.",
+    "codegen.progress": event.message,
+    "codegen.done": "Generated code ZIP ready.",
     "math.issue": "Math issue added.",
     "replication.queued": "Replication plan ready.",
+    "evaluation.plan": "Evaluation plan ready.",
     "benchmark.suggested": "Benchmark suggestion added.",
-    "attack.found": "Stress test added.",
     "node.update": "Research map updated.",
     "edge.update": "Research map link added."
   };

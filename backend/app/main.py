@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from app.models import (
     AgentRunRequest,
     Citation,
     CodeChangeRequest,
+    CodeGenerateRequest,
     CreateSessionResponse,
     GraphEdge,
     GraphNode,
@@ -30,6 +32,7 @@ from app.models import (
 )
 from app.services.cloudinary_storage import upload_paper_asset
 from app.services.arxiv_client import fetch_arxiv_pdf
+from app.services.code_generator import generate_full_project
 from app.services.pdf_parser import extract_text_from_pdf_bytes
 from app.services.semantic_scholar_client import get_references
 from app.services.weave_tracing import log_event, trace_agent_run, traced_agent_call
@@ -361,7 +364,7 @@ async def run_agent(session_id: str, agent_name: str, request: AgentRunRequest):
                 {"session_id": session_id, "paper_id": paper.id, "section_id": section.id if section else None},
                 lambda: run_code_agent(session, paper, section=section, event_emitter=emit),
             )
-            _add_repo_to_graph(session_id, paper, output["repo"])
+            _add_repo_to_graph(session_id, paper, output["repo"], output.get("implementation_confidence"))
         elif normalized_agent == "replication":
             output = await traced_agent_call(
                 "Replication",
@@ -432,6 +435,57 @@ async def code_change(session_id: str, request: CodeChangeRequest):
 
     session = store.get_session(session_id)
     return {"edits": [edit.model_dump() for edit in edits], "events": session.events[started_at:]}
+
+
+@app.post("/api/sessions/{session_id}/code/generate")
+async def generate_code_project(session_id: str, request: CodeGenerateRequest):
+    session = _session_or_404(session_id)
+    paper = _paper_by_id(session, request.paper_id) if request.paper_id else _main_paper_or_404(session)
+    repo = _repo_from_graph(session_id)
+    started_at = len(session.events)
+
+    emit(
+        session_id,
+        "codegen.started",
+        f"Generating a downloadable project for {paper.title}.",
+        agent="Code",
+        status="running",
+        payload={"paper_id": paper.id, "repo": repo.get("full_name") or repo.get("name")},
+    )
+    result = await generate_full_project(
+        paper=paper,
+        repo=repo,
+        equations=paper.equations or None,
+        event_emitter=emit,
+        session=session,
+    )
+    store.store_zip(session_id, result.zip_bytes, result.project_name)
+    payload = {**result.to_json_safe(), "download_url": f"/api/sessions/{session_id}/code/download"}
+    trace_agent_run("CodeGeneration", {"session_id": session_id, "paper_id": paper.id}, payload)
+    emit(
+        session_id,
+        "codegen.done",
+        f"{result.project_name}.zip is ready to download.",
+        agent="Code",
+        status="done",
+        payload=payload,
+    )
+    session = store.get_session(session_id)
+    return {**payload, "events": session.events[started_at:]}
+
+
+@app.get("/api/sessions/{session_id}/code/download")
+async def download_code_project(session_id: str):
+    _session_or_404(session_id)
+    zip_bytes = store.get_zip(session_id)
+    if not zip_bytes:
+        raise HTTPException(status_code=404, detail="No generated project is ready yet")
+    filename = f"{store.get_zip_name(session_id)}.zip"
+    return StreamingResponse(
+        io.BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _session_or_404(session_id: str):
@@ -622,9 +676,11 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:80] or "item"
 
 
-def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any]) -> None:
+def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any], confidence: dict[str, Any] | None = None) -> None:
     safe_name = (repo.get("full_name") or repo.get("name") or "repo").replace("/", "_").replace(" ", "_").lower()
     repo_metadata = dict(repo)
+    if confidence:
+        repo_metadata["implementation_confidence"] = confidence
     full_name = str(repo_metadata.get("full_name") or "")
     if not repo_metadata.get("html_url") and "/" in full_name and not full_name.startswith("local/"):
         repo_metadata["html_url"] = f"https://github.com/{full_name}"
@@ -641,8 +697,8 @@ def _add_repo_to_graph(session_id: str, paper: Paper, repo: dict[str, Any]) -> N
         target=node.id,
         type="implements",
         label="implements",
-        confidence=0.72,
-        evidence=[repo.get("match_reason", "Code Agent selected this repo.")],
+        confidence=_repo_confidence_score(confidence),
+        evidence=[repo.get("match_reason", "Code Agent selected this repo."), *((confidence or {}).get("evidence") or [])],
     )
     store.add_node(session_id, node)
     store.add_edge(session_id, edge)
@@ -656,6 +712,15 @@ def _repo_from_graph(session_id: str) -> dict[str, Any]:
         if node.type == "code":
             return dict(node.metadata)
     return {"name": "no-repo-selected", "full_name": "local/no-repo-selected", "html_url": None}
+
+
+def _repo_confidence_score(confidence: dict[str, Any] | None) -> float:
+    if not confidence:
+        return 0.72
+    try:
+        return float(confidence.get("confidence", 0.72))
+    except (TypeError, ValueError):
+        return 0.72
 
 
 def _serializable(output: Any) -> Any:

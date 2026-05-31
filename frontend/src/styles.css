@@ -916,11 +916,6 @@ button:disabled {
   color: #0d5c60;
 }
 
-.agent-card.action-adversarial {
-  background: #fff0f3;
-  color: #713142;
-}
-
 .agent-card.action-graph {
   background: #eef5f2;
   color: #265149;
@@ -1003,11 +998,6 @@ button:disabled {
 .generation-row.action-evaluation {
   background: #edf9f8;
   border-color: #b9dddb;
-}
-
-.generation-row.action-adversarial {
-  background: #fff5f7;
-  border-color: #edc1cc;
 }
 
 .generation-row.action-graph {
@@ -1098,12 +1088,6 @@ button:disabled {
   background: #edf9f8;
   border-color: #c3e1df;
   color: #0d5c60;
-}
-
-.agent-detail-hero.action-adversarial {
-  background: #fff5f7;
-  border-color: #edc6d0;
-  color: #713142;
 }
 
 .agent-detail-hero.action-graph {
@@ -1201,6 +1185,35 @@ button:disabled {
   font-size: 12px;
   font-weight: 900;
   text-decoration: none;
+}
+
+.inline-action-button {
+  width: fit-content;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 10px;
+  border: 1px solid #9fcfc4;
+  border-radius: 8px;
+  background: #eaf7f4;
+  color: #0e5d51;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.result-badge {
+  width: fit-content;
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #edf1f4;
+  color: #52616d;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .detail-activity-row {

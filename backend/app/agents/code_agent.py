@@ -7,9 +7,21 @@ from app.services.github_client import search_repositories
 from app.services.llm import complete_json, reasoning_model
 
 
-CODE_GENERATION_PROMPT = """You are a research engineer. Given a paper's method description, generate clean Python code that sketches the core contribution.
-Return JSON with filename, code, description, dependencies, usage_example, and limitations.
-Use PyTorch when appropriate. Mark underspecified parts with TODO comments."""
+REPO_RELEVANCE_PROMPT = """You are a research code analyst.
+Score whether a GitHub repository actually implements the given paper.
+
+Return JSON:
+{
+  "confidence": 0.0,
+  "verdict": "high|medium|low",
+  "rationale": "short explanation",
+  "evidence": ["specific match signals"],
+  "concerns": ["specific mismatch or uncertainty signals"],
+  "recommend_generate": true
+}
+
+Confidence means: 1.0 = official or clearly paper-specific implementation, 0.5 = plausible but uncertain,
+0.0 = likely unrelated or no verified repository."""
 
 SUGGESTION_APPLY_PROMPT = """You are a senior software engineer applying research-review feedback to code.
 Return JSON with file_path, change_type, description, original_snippet, new_snippet, and rationale."""
@@ -40,27 +52,37 @@ async def run_code_agent(
     repos = await search_repositories(queries, max_results=5)
     repo = _select_repo(repos, paper)
     repo_is_real = _repo_is_real(repo)
+    implementation_confidence = await _evaluate_repo_relevance(paper, repo, repo_is_real, finding)
     handoff = _build_replication_handoff(paper, repo, finding)
-    generated_code = {}
-    if not repo_is_real:
-        if event_emitter:
-            event_emitter(
-                session.session_id,
-                "code.generating",
-                "No verified public repository found, so Code Agent is generating a method skeleton.",
-                agent="Code",
-                status="running",
-            )
-        generated_code = await _generate_code_from_paper(paper, section)
+    should_offer_generation = bool(implementation_confidence.get("recommend_generate")) or float(implementation_confidence.get("confidence", 0.0)) < 0.65
+    generated_code = {
+        "available": should_offer_generation,
+        "kind": "multi_file_zip",
+        "reason": (
+            "The selected repository match is uncertain, so DeepPaper can generate a validated starter project."
+            if should_offer_generation
+            else "The repository match looks strong; generated code is optional."
+        ),
+        "endpoint": "/api/sessions/{session_id}/code/generate",
+    }
+    if should_offer_generation and event_emitter:
+        event_emitter(
+            session.session_id,
+            "code.generation_available",
+            "Repository confidence is low enough to offer generated code.",
+            agent="Code",
+            status="done",
+            payload={"implementation_confidence": implementation_confidence},
+        )
     triggers = [
         AgentTrigger(target="replication", reason="repo_found", context={"repo": repo, "entrypoint": handoff["entrypoint_guess"]}).model_dump(),
-        AgentTrigger(target="adversarial", reason="code_available", context={"repo": repo}).model_dump(),
     ]
     result = {
         "repo": repo,
         "repo_is_real": repo_is_real,
         "candidate_repos": repos,
         "search_queries": queries,
+        "implementation_confidence": implementation_confidence,
         "key_files": _infer_key_files(repo, paper),
         "paper_claim_connection": _claim_connection(paper, finding),
         "implementation_risks": _implementation_risks(finding),
@@ -73,7 +95,7 @@ async def run_code_agent(
         event_emitter(
             session.session_id,
             "repo.ready",
-            "Code Agent found a candidate implementation repo and handed it to Replication.",
+            "Code Agent scored a candidate implementation repo and handed it to Replication.",
             agent="Code",
             status="done",
             payload=result,
@@ -145,6 +167,98 @@ def _select_repo(repos: list[dict[str, Any]], paper: Paper) -> dict[str, Any]:
     return sorted(repos, key=score, reverse=True)[0]
 
 
+async def _evaluate_repo_relevance(
+    paper: Paper,
+    repo: dict[str, Any],
+    repo_is_real: bool,
+    finding: AgentFinding | None,
+) -> dict[str, Any]:
+    fallback = _heuristic_repo_relevance(paper, repo, repo_is_real)
+    result = await complete_json(
+        REPO_RELEVANCE_PROMPT,
+        (
+            f"Paper title: {paper.title}\n"
+            f"Paper arXiv ID: {paper.arxiv_id or 'unknown'}\n"
+            f"Authors: {', '.join(paper.authors[:6])}\n"
+            f"Abstract: {(paper.abstract or '')[:1200]}\n"
+            f"Claims: {[claim.text for claim in paper.claims[:4]]}\n"
+            f"Finding context: {finding.title + ': ' + finding.body if finding else 'none'}\n\n"
+            f"Repository full name: {repo.get('full_name')}\n"
+            f"Repository URL: {repo.get('html_url')}\n"
+            f"Description: {repo.get('description')}\n"
+            f"Language: {repo.get('language')}\n"
+            f"Stars: {repo.get('stars')}\n"
+            f"Updated: {repo.get('updated_at')}\n"
+            f"Search reason: {repo.get('match_reason')}"
+        ),
+        fallback,
+        model=reasoning_model(),
+        temperature=0.05,
+        max_tokens=700,
+    )
+    confidence = _as_float(result.get("confidence"), fallback["confidence"])
+    confidence = max(0.0, min(1.0, confidence))
+    verdict = str(result.get("verdict") or fallback["verdict"]).lower()
+    if verdict not in {"high", "medium", "low"}:
+        verdict = "high" if confidence >= 0.8 else "medium" if confidence >= 0.55 else "low"
+    concerns = result.get("concerns") if isinstance(result.get("concerns"), list) else fallback["concerns"]
+    evidence = result.get("evidence") if isinstance(result.get("evidence"), list) else fallback["evidence"]
+    return {
+        "confidence": round(confidence, 2),
+        "verdict": verdict,
+        "rationale": str(result.get("rationale") or fallback["rationale"])[:700],
+        "evidence": [str(item)[:220] for item in evidence[:5]],
+        "concerns": [str(item)[:220] for item in concerns[:5]],
+        "recommend_generate": bool(result.get("recommend_generate")) or confidence < 0.65 or not repo_is_real,
+    }
+
+
+def _heuristic_repo_relevance(paper: Paper, repo: dict[str, Any], repo_is_real: bool) -> dict[str, Any]:
+    if not repo_is_real:
+        return {
+            "confidence": 0.15,
+            "verdict": "low",
+            "rationale": "GitHub search did not return a verified public repository.",
+            "evidence": [],
+            "concerns": ["No public repository URL is available."],
+            "recommend_generate": True,
+        }
+    haystack = " ".join(str(repo.get(key) or "") for key in ("name", "full_name", "description", "match_reason")).lower()
+    title_terms = [term.lower() for term in paper.title.replace(":", " ").split() if len(term) > 3]
+    overlap = sum(1 for term in title_terms if term in haystack)
+    confidence = min(0.9, 0.35 + overlap * 0.08)
+    evidence = []
+    concerns = []
+    if paper.arxiv_id and paper.arxiv_id in haystack:
+        confidence = max(confidence, 0.82)
+        evidence.append("Repository/search metadata mentions the paper arXiv ID.")
+    if paper.authors and any(author.split()[-1].lower() in haystack for author in paper.authors[:3] if author.split()):
+        confidence += 0.08
+        evidence.append("Repository metadata overlaps with author names.")
+    if overlap:
+        evidence.append(f"{overlap} title term(s) appear in repository metadata.")
+    if overlap < 2 and not evidence:
+        concerns.append("Repository metadata has weak lexical overlap with the paper title.")
+    if not repo.get("updated_at"):
+        concerns.append("Repository freshness is unknown.")
+    confidence = max(0.0, min(0.98, confidence))
+    return {
+        "confidence": round(confidence, 2),
+        "verdict": "high" if confidence >= 0.8 else "medium" if confidence >= 0.55 else "low",
+        "rationale": "Heuristic score based on title, arXiv, author, and metadata overlap.",
+        "evidence": evidence,
+        "concerns": concerns,
+        "recommend_generate": confidence < 0.65,
+    }
+
+
+def _as_float(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _infer_key_files(repo: dict[str, Any], paper: Paper) -> list[dict[str, str]]:
     haystack = f"{repo.get('full_name', '')} {repo.get('description', '')} {paper.title}".lower()
     if "lora" in haystack:
@@ -192,31 +306,6 @@ def _code_gaps(repo: dict[str, Any], paper: Paper, repo_is_real: bool) -> list[s
     if not repo.get("updated_at"):
         gaps.append("Repository freshness could not be verified from GitHub metadata.")
     return gaps
-
-
-async def _generate_code_from_paper(paper: Paper, section=None) -> dict[str, Any]:
-    method_text = section.text[:3000] if section else ""
-    if not method_text:
-        method_text = next(
-            (paper_section.text[:3000] for paper_section in paper.sections if paper_section.type in {"method", "methodology", "approach"}),
-            paper.sections[0].text[:2000] if paper.sections else paper.abstract or "",
-        )
-    fallback = {
-        "filename": f"{_safe_filename(paper.title)}_impl.py",
-        "code": f'"""\nGenerated skeleton for: {paper.title}\nFill TODOs from the paper before running.\n"""\n\n# TODO: implement the method described in the paper.\n',
-        "description": f"Skeleton implementation of {paper.title}",
-        "dependencies": ["torch", "numpy"],
-        "usage_example": "# Instantiate the module and pass paper-specific inputs.",
-        "limitations": ["Skeleton only; needs human validation against the paper."],
-    }
-    return await complete_json(
-        CODE_GENERATION_PROMPT,
-        f"Paper title: {paper.title}\nClaims: {[claim.text for claim in paper.claims[:4]]}\nMethod text:\n{method_text}",
-        fallback,
-        model=reasoning_model(),
-        temperature=0.15,
-        max_tokens=1200,
-    )
 
 
 async def apply_suggestions(
@@ -338,9 +427,3 @@ def _dedupe(values: list[str]) -> list[str]:
         seen.add(key)
         deduped.append(normalized)
     return deduped
-
-
-def _safe_filename(value: str) -> str:
-    import re
-
-    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:40] or "paper_method"

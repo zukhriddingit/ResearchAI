@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { AlertCircle } from "lucide-react";
-import { analyzePaper, apiBase, clickCitation, createSession, getEvents, getSession, loadPaper, runAgent, subscribeEvents, uploadPaper } from "./api";
+import { analyzePaper, apiBase, clickCitation, createSession, generateCodeProject, getEvents, getSession, loadPaper, runAgent, subscribeEvents, uploadPaper } from "./api";
 import AgentPanel from "./components/AgentPanel";
 import CitationPopover from "./components/CitationPopover";
 import KnowledgeGraph from "./components/KnowledgeGraph";
@@ -270,6 +270,23 @@ function App() {
     }
   };
 
+  const handleGenerateCode = async () => {
+    if (!sessionId || !activePaper) return;
+    setBusy(true);
+    setActiveAgent("code");
+    setError(null);
+    appendLocalEvent("Code", "Generating a downloadable multi-file project.", "codegen.started");
+    try {
+      await generateCodeProject(sessionId, activePaper.id);
+      await refreshSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate code project");
+    } finally {
+      setBusy(false);
+      setActiveAgent(null);
+    }
+  };
+
   const handlePaperSelect = useCallback((paperId: string) => {
     setSelectedPaperId(paperId);
     rememberPaper(paperId);
@@ -362,6 +379,7 @@ function App() {
             findings={session?.findings ?? []}
             activeAgent={activeAgent}
             onRunAgent={handleRunAgent}
+            onGenerateCode={handleGenerateCode}
             disabled={!activePaper || busy}
           />
         </section>
@@ -390,7 +408,6 @@ function agentActionMessage(agentName: string) {
     math: "Math Agent is explaining equations and checking notation.",
     replication: "Replication Agent is building a dry-run scorecard for the current paper.",
     evaluation: "Evaluation Agent is suggesting benchmarks and measurement gaps.",
-    adversarial: "Adversarial Agent is generating stress tests against the strongest claims.",
     graph: "Graph Agent is refreshing shared session memory."
   };
   return messages[agentName] ?? `${titleCase(agentName)} Agent started.`;

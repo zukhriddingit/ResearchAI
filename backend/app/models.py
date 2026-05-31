@@ -113,6 +113,12 @@ class CodeChangeRequest(BaseModel):
     target_files: list[str] = Field(default_factory=list)
 
 
+class CodeGenerateRequest(BaseModel):
+    paper_id: str | None = None
+    include_tests: bool = True
+    include_scripts: bool = True
+
+
 class GraphNode(BaseModel):
     id: str
     label: str

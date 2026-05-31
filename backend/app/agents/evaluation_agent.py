@@ -5,8 +5,20 @@ from app.services.llm import complete_json, reasoning_model
 
 
 EVALUATION_PROMPT = """You are the Evaluation Agent for DeepPaper.
-Suggest harder, newer, or more decision-relevant benchmarks for the main paper.
-Return actionable findings that a code or replication agent could use."""
+Use a reasoning model to design a stronger evaluation plan for the paper.
+Focus on what a real researcher would need next: missing baselines, ablations, datasets,
+metrics, statistical checks, compute budgets, and failure-mode tests.
+
+Return JSON:
+{
+  "findings": [
+    {
+      "severity": "low|medium|high",
+      "title": "specific evaluation gap",
+      "body": "why it matters and exactly how to test it"
+    }
+  ]
+}"""
 
 
 async def run_evaluation_agent(session, paper: Paper, section=None, event_emitter=None) -> list[AgentFinding]:
@@ -68,6 +80,14 @@ async def run_evaluation_agent(session, paper: Paper, section=None, event_emitte
     )
     findings = _parse_findings(llm_result, fallback, paper.id, section_id)
     if event_emitter:
+        event_emitter(
+            session.session_id,
+            "evaluation.plan",
+            f"Evaluation Agent produced {len(findings)} benchmark improvement(s).",
+            agent="Evaluation",
+            status="done",
+            payload={"findings": [finding.model_dump() for finding in findings], "model": reasoning_model()},
+        )
         for finding in findings:
             lower_finding = f"{finding.title} {finding.body}".lower()
             event_type = "experiment.missing" if "missing" in lower_finding or "ablation" in lower_finding else "benchmark.suggested"

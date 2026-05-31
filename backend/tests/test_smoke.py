@@ -73,7 +73,19 @@ def test_uploaded_paper_agent_flow():
         json={"paper_id": paper_id, "mode": "manual"},
     ).json()
     assert code["output"]["repo"]["full_name"]
+    assert code["output"]["implementation_confidence"]["confidence"] < 0.65
+    assert code["output"]["generated_code"]["available"] is True
     assert any(event["type"] == "repo.ready" for event in code["events"])
+
+    generated = client.post(
+        f"/api/sessions/{session_id}/code/generate",
+        json={"paper_id": paper_id},
+    ).json()
+    assert generated["download_url"].endswith("/code/download")
+    assert generated["file_count"] >= 8
+    downloaded = client.get(f"/api/sessions/{session_id}/code/download")
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "application/zip"
 
     math = client.post(
         f"/api/sessions/{session_id}/agents/math/run",
@@ -99,6 +111,7 @@ def test_uploaded_paper_agent_flow():
         json={"paper_id": paper_id, "mode": "manual"},
     ).json()
     evaluation_event_types = {event["type"] for event in evaluation["events"]}
+    assert "evaluation.plan" in evaluation_event_types
     assert "benchmark.suggested" in evaluation_event_types
     assert "experiment.missing" in evaluation_event_types
 

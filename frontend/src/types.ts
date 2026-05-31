@@ -168,3 +168,13 @@ export interface AgentRunRequest {
   citation_id?: string;
   mode?: "manual" | "auto";
 }
+
+export interface CodeGenerateResponse {
+  project_name: string;
+  description: string;
+  file_count: number;
+  total_lines: number;
+  file_list: Array<{ path: string; description: string }>;
+  download_url: string;
+  events: AgentEvent[];
+}

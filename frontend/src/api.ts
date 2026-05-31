@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentRunRequest, CitationClickResponse, LoadPaperResponse, SessionState, UploadPaperResponse } from "./types";
+import type { AgentEvent, AgentRunRequest, CitationClickResponse, CodeGenerateResponse, LoadPaperResponse, SessionState, UploadPaperResponse } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -63,6 +63,13 @@ export async function runAgent(sessionId: string, agentName: string, payload: Ag
   return request(`/api/sessions/${sessionId}/agents/${agentName}/run`, {
     method: "POST",
     body: JSON.stringify({ mode: "manual", ...payload })
+  });
+}
+
+export async function generateCodeProject(sessionId: string, paperId?: string): Promise<CodeGenerateResponse> {
+  return request(`/api/sessions/${sessionId}/code/generate`, {
+    method: "POST",
+    body: JSON.stringify({ paper_id: paperId })
   });
 }
 
