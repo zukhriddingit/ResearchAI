@@ -17,6 +17,12 @@ The frontend expects the backend at `http://localhost:8000` unless `VITE_API_URL
 VITE_API_URL=http://127.0.0.1:8000 npm run dev
 ```
 
+## GitHub Pages
+
+The root GitHub Actions workflow builds this frontend with `GITHUB_PAGES=true`, which sets the Vite base path to `/ResearchAI/`.
+
+Set the repository variable `VITE_API_URL` when the backend is deployed somewhere public. If it is unset, the deployed frontend calls `http://localhost:8000`, which is useful only when the viewer is also running the backend locally.
+
 ## Team 3 Scope
 
 - `src/App.tsx`: session lifecycle, loading state, event subscription, API orchestration.

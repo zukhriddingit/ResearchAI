@@ -76,6 +76,22 @@ If your backend runs somewhere else:
 VITE_API_URL=http://localhost:8000 npm run dev
 ```
 
+## Deploy Frontend To GitHub Pages
+
+The React frontend is deployed by `.github/workflows/deploy-pages.yml` on every push to `main`.
+
+GitHub Pages hosts only the static frontend. The FastAPI backend still needs to run locally or be deployed separately. If the backend is deployed publicly, set a repository variable named `VITE_API_URL` to the backend origin, for example:
+
+```txt
+https://your-backend.example.com
+```
+
+For local demos from the Pages site, leave `VITE_API_URL` unset and run the backend at `http://localhost:8000`. The backend allows the GitHub Pages origin by default; for another frontend domain, set:
+
+```txt
+FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://zukhriddingit.github.io,https://your-domain.example.com
+```
+
 ## Demo Flow
 
 1. Open the frontend.

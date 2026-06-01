@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +43,23 @@ from app.store import store
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
+
+def _frontend_origins() -> list[str]:
+    defaults = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://zukhriddingit.github.io",
+    ]
+    configured = os.getenv("FRONTEND_ORIGINS", "")
+    origins = [*defaults, *(origin.strip() for origin in configured.split(",") if origin.strip())]
+    return list(dict.fromkeys(origins))
+
+
 app = FastAPI(title="DeepPaper API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_frontend_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

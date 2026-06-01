@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentRunRequest, CitationClickResponse, CodeGenerateResponse, LoadPaperResponse, SessionState, UploadPaperResponse } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const API_BASE = (import.meta.env.VITE_API_URL?.trim() || "http://localhost:8000").replace(/\/+$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
