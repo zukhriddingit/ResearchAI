@@ -92,6 +92,44 @@ For local demos from the Pages site, leave `VITE_API_URL` unset and run the back
 FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://zukhriddingit.github.io,https://your-domain.example.com
 ```
 
+## Deploy Backend To Hugging Face Spaces
+
+Create a Docker Space with:
+
+```txt
+SDK: Docker
+Hardware: CPU Basic
+Storage bucket: off
+Dev mode: off
+```
+
+The root `Dockerfile` runs the FastAPI backend on port `7860`, which is the required Hugging Face Spaces app port.
+
+Set Space secrets for the backend API keys:
+
+```txt
+WANDB_API_KEY
+WANDB_INFERENCE_PROJECT
+WEAVE_PROJECT
+SEMANTIC_SCHOLAR_API_KEY
+GITHUB_TOKEN
+CLOUDINARY_CLOUD_NAME
+CLOUDINARY_API_KEY
+CLOUDINARY_API_SECRET
+```
+
+Set this Space variable so browser calls from GitHub Pages are accepted:
+
+```txt
+FRONTEND_ORIGINS=https://zukhriddingit.github.io,http://localhost:5173,http://127.0.0.1:5173
+```
+
+After the Space is deployed, set the GitHub repository variable `VITE_API_URL` to the Space URL, for example:
+
+```txt
+https://zukhriddinai-researchai.hf.space
+```
+
 ## Demo Flow
 
 1. Open the frontend.
